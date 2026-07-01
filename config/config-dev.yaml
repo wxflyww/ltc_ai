@@ -1,0 +1,2 @@
+llm:
+  base_url: "http://vllm-dev.internal:8000/v1"
