@@ -67,8 +67,10 @@ def _auth_error_response() -> Response:
         code=ErrorCode.AUTH_INVALID, message="API Key 无效或缺失",
         data=None, trace_id="", duration_seconds=0.0,
     )
-    return Response(content=resp.model_dump_json(), media_type="application/json",
-                    status_code=401)
+    return Response(
+        content=json.dumps(resp.to_dict(), ensure_ascii=False),
+        media_type="application/json", status_code=401,
+    )
 
 
 async def _inject_trace_fields(response: Response, trace_id: str, duration: float) -> Response:
