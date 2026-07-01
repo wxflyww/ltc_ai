@@ -1,2 +1,2 @@
 llm:
-  base_url: "http://vllm-dev.internal:8000/v1"
+  base_url: "http://192.168.16.10:8080/v1"

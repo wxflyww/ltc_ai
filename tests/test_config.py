@@ -13,7 +13,7 @@ def test_loads_default_then_env_override(tmp_path, monkeypatch):
     assert settings.llm.temperature == 0.3
     assert settings.llm.timeout == 30
     # dev 覆盖
-    assert settings.llm.base_url == "http://vllm-dev.internal:8000/v1"
+    assert settings.llm.base_url == "http://192.168.16.10:8080/v1"
     # env 标记
     assert settings.app.env == "dev"
 
@@ -33,5 +33,5 @@ def test_prod_env_uses_prod_yaml(monkeypatch):
     _reset_settings()
     settings = get_settings()
     assert settings.app.env == "prod"
-    assert settings.llm.base_url == "http://vllm-prod.internal:8000/v1"
+    assert settings.llm.base_url == "http://192.168.16.10:8080/v1"
     assert settings.server.log_level == "WARNING"
