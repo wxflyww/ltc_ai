@@ -44,7 +44,7 @@ LTC_ENV=dev .venv/Scripts/python -m uvicorn app.main:app --reload
 如需鉴权可联调，设置 API Key：
 
 ```bash
-LTC_ENV=dev LTC__AUTH__API_KEYS='["my-key"]' .venv/Scripts/python -m uvicorn app.main:app --reload
+$env:LTC_ENV="dev"; $env:LTC__AUTH__API_KEYS='["7C218CEA-1BD7-48B1-B839-62F03FB082AA"]'; python -m uvicorn app.main:app --reload
 ```
 
 ## 配置

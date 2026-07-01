@@ -4,7 +4,7 @@ server:
   log_level: "INFO"
 llm:
   base_url: ""
-  model: "qwen3.6-35b-a3b"
+  model: "Qwen3-32B"
   temperature: 0.3
   timeout: 30
 auth:

@@ -29,7 +29,7 @@ def get_chat_model() -> BaseChatModel:
         base_url=s.base_url,
         temperature=s.temperature,
         timeout=s.timeout,
-        api_key="dummy-not-used-by-vllm-but-required",
+        api_key="7C218CEA-1BD7-48B1-B839-62F03FB082AA",
     )
     return _chat_model
 
