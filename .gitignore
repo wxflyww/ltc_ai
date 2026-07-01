@@ -48,3 +48,8 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# 环境与密钥
+.env
+config/config-local-*.yaml
+
