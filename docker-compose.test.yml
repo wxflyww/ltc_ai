@@ -1,0 +1,9 @@
+services:
+  ltc-ai:
+    environment:
+      LTC_ENV: test
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
