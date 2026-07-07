@@ -73,6 +73,14 @@ from app.models.llm import get_chat_model, invoke_model
 
 ## Input Contract
 
+Endpoint:
+
+```text
+POST /api/v1/contract-review
+```
+
+The endpoint requires the same API key authentication as other non-health business endpoints.
+
 API 入参：
 
 ```json
@@ -95,20 +103,29 @@ API 入参：
 
 业务响应放入现有统一响应的 `data` 字段：
 
+
 ```json
+
 {
-  "overall_result": "PASS | BLOCK",
-  "check_time": "2026-06-23T10:00:00",
-  "checks": [
-    {
-      "id": "序号2",
-      "name": "签章页完整性",
-      "result": "FAIL | WARN | PASS | NA",
-      "block_level": "硬阻断 | 提示 | 通过 | 不适用",
-      "reason": "具体原因；无问题为null"
-    }
-  ]
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "overall_result": "PASS | BLOCK",
+    "check_time": "2026-06-23T10:00:00",
+    "checks": [
+      {
+        "id": "序号2",
+        "name": "签章页完整性",
+        "result": "FAIL | WARN | PASS | NA",
+        "block_level": "硬阻断 | 提示 | 通过 | 不适用",
+        "reason": "具体原因；无问题为null"
+      }
+    ]
+  },
+  "traceId": "链路追踪ID",
+  "duration_seconds": 0.123
 }
+
 ```
 
 硬性约束：
@@ -119,6 +136,90 @@ API 入参：
 - 不允许用 `dict[id] = item` 覆盖聚合。
 - 任一记录满足 `result=FAIL` 且 `block_level=硬阻断` 时，`overall_result=BLOCK`。
 - `overall_result=BLOCK` 时，WARN/提示项仍必须完整展示。
+- 合同审核能力不得绕过现有统一响应机制；业务字段只放在 data 内，不能把 overall_result/checks 提升到顶层。
+
+## Error Contract
+
+合同审核能力沿用现有统一错误码和异常响应机制。
+
+```text
+10001 参数校验失败
+10002 鉴权失败
+20001 模型调用失败重试耗尽
+20002 模型调用超时
+20003 模型输出格式异常
+29999 未知错误
+```
+
+错误响应仍使用统一响应壳：
+
+```json
+{
+  "code": 20003,
+  "message": "模型输出格式异常",
+  "data": null,
+  "traceId": "链路追踪ID",
+  "duration_seconds": 0.123
+}
+```
+
+映射要求：
+
+- Pydantic 入参校验失败：`10001`。
+- API Key 鉴权失败：`10002`。
+- LLM 调用在 service 层重试耗尽：`20001`。
+- LLM 超时：`20002`。
+- LLM 返回空内容、非 JSON、缺少必填字段或 JSON 解析失败：`20003`。
+- 未捕获异常：`29999`。
+
+## Framework Integration
+
+合同审核能力作为独立 capability 接入现有薄分层架构：
+
+```text
+API Router → contract_review service → app.models.llm → app.core
+```
+
+接入要求：
+
+- 在 `app/capabilities/contract_review/router.py` 定义 FastAPI router，prefix 使用 `/api/v1`。
+- 在 `app/main.py:create_app()` 中通过 `app.include_router(contract_review_router)` 注册路由。
+- 路由函数返回 `ApiResponse(data=data).to_dict()`，保持 `traceId` 和 `duration_seconds` 由中间件注入。
+- 不新增独立响应壳，不绕过 `app.core.response.ApiResponse`。
+- 不在能力包中注册新的全局中间件。
+
+## Prompt Management
+
+Prompt 模板存放在：
+
+```text
+prompts/contract_review.yaml
+```
+
+加载逻辑放在：
+
+```text
+app/capabilities/contract_review/prompts.py
+```
+
+要求：
+
+- `service.py` 不硬编码大段 Prompt 文本。
+- Prompt 构造函数返回 LangChain message 列表，供 `invoke_model()` 调用。
+- Prompt JSON 输出必须由 service 层解析和校验；格式异常映射为 `ModelFormatError` / `20003`。
+
+## LLM Retry Policy
+
+合同审核 service 遵循现有模型调用与重试约束：
+
+- 模型实例由 `get_chat_model()` 提供。
+- 单次模型调用由 `invoke_model()` 执行。
+- 重试逻辑只在 service 层实现。
+- 最多 3 次尝试：1 次初始调用 + 2 次重试。
+- 可重试错误：超时、HTTP 5xx、HTTP 429。
+- 不可重试错误：模型输出格式异常、JSON 解析失败、字段校验失败。
+- 重试退避使用指数退避 + 抖动，保持与现有 translate 能力一致。
+- 单元测试必须 mock `invoke_model()`，CI 不依赖真实私有化 LLM；本地联调和样本验收可以接入私有化 LLM 运行。
 
 ## Pipeline 0: Text Preprocessing
 
@@ -362,7 +463,6 @@ address, phone, fax, website, postal_code
 规则：
 
 - 正文声明附件数 `total_declared` 大于实际附件总数：FAIL。
-- 声明 3 份附件但只获取 2 份：FAIL。
 - 实际数量足够但标题无法可靠匹配：WARN。
 - 多余上传附件没有正文标注来源：FAIL。
 - 所有实际上传附件，即使标题未匹配，也必须进入 B-4 内容一致性检查。
@@ -449,7 +549,7 @@ system_preset.authorized_reps
 
 ## Implementation Notes
 
-- LLM 调用在测试中 mock `invoke_model()`。
+- 单元测试和CI测试应 mock `invoke_model()`，不依赖真实LLM；本地联调和样本验收可接入私有化大模型运行。
 - Prompt JSON 解析失败应作为模型格式异常处理，进入现有错误体系。
 - 所有字段空值判断统一使用 `None`、空字符串、纯空白、字符串 `"null"` 为空。
 - 金额计算使用 `Decimal`，避免浮点误差。
