@@ -1,6 +1,6 @@
 # LTC AI 能力服务
 
-LTC（Lead to Cash）系统的 AI 中台能力层。首期提供健康检查与文本翻译接口，内部用 LangChain 调用私有化 vLLM 大模型（Qwen3.6-35B-A3B / DeepSeek V4-Flash）。
+LTC（Lead to Cash）系统的 AI 中台能力层。提供健康检查、文本翻译、合同组织评审接口，内部用 LangChain 调用私有化 vLLM 大模型（Qwen3.6-35B-A3B / DeepSeek V4-Flash）。
 
 ## 接口
 
@@ -9,6 +9,7 @@ LTC（Lead to Cash）系统的 AI 中台能力层。首期提供健康检查与�
 | GET | `/health` | 否 | 存活探针 |
 | GET | `/metrics` | 否 | Prometheus 指标 |
 | POST | `/api/v1/translate` | 是 | 文本翻译 |
+| POST | `/api/v1/contract-review` | 是 | 合同组织评审 |
 
 ### 翻译示例
 
@@ -32,6 +33,15 @@ curl -X POST http://localhost:8000/api/v1/translate \
 ```
 
 错误响应同样带 `traceId` 和 `duration_seconds`。错误码：`0` 成功；`1xxxx` 客户端错误（`10001` 参数校验、`10002` 鉴权失败）；`2xxxx` 服务端错误（`20001` 模型调用失败重试耗尽、`20002` 超时、`20003` 格式异常、`29999` 未知）。
+
+### 合同组织评审示例
+
+```bash
+curl -X POST http://localhost:8000/api/v1/contract-review \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: <your-key>" \
+  -d '{"contract_md":"# 合同\n正文","attachments":[]}'
+```
 
 ## 本地开发
 
@@ -57,6 +67,9 @@ $env:LTC_ENV="dev"; $env:LTC__AUTH__API_KEYS='["7C218CEA-1BD7-48B1-B839-62F03FB0
 | `LTC__LLM__BASE_URL` | vLLM OpenAI 兼容端点 |
 | `LTC__LLM__MODEL` | 模型名 |
 | `LTC__AUTH__API_KEYS` | API Key 白名单（JSON 数组） |
+| `LTC__SIGNING_PRESET__BASE_URL` | 签署地预设值服务基础地址 |
+| `LTC__SIGNING_PRESET__PATH` | 签署地预设值按主体名称查询路径 |
+| `LTC__SIGNING_PRESET__TIMEOUT` | 签署地预设值查询超时时间（秒） |
 
 密钥通过环境变量注入，不入代码库。见 `.env.example`。
 
@@ -89,9 +102,9 @@ docker compose -f docker-compose.yml -f docker-compose.test.yml up -d
 
 ```
 API 层 (FastAPI Router + Pydantic)
-  → 能力层 (capabilities/translate/)   组装 prompt、重试
+  → 能力层 (capabilities/translate/, capabilities/contract_review/)   组装 prompt、规则检查、重试
     → 模型适配层 (models/llm.py)        LangChain ChatModel 适配 vLLM
-      → 基础设施层 (core/)              配置/日志/错误/中间件
+    → 基础设施层 (core/)              配置/日志/错误/中间件
 ```
 
 能力之间互不依赖，未来加 OCR/摘要只需在 `app/capabilities/` 下新增独立包并在 `main.py` 注册。详见 `docs/superpowers/specs/2026-07-01-ltc-ai-translate-service-design.md`。
