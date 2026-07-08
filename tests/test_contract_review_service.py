@@ -1,7 +1,7 @@
 from unittest.mock import patch
 
-from app.capabilities.contract_review.schemas import ContractReviewRequest
-from app.capabilities.contract_review.service import review_contract
+from app.capabilities.contract_review.schemas import AttachmentInput, ContractReviewRequest, SystemPreset
+from app.capabilities.contract_review.service import review_contract, run_review_pipeline
 
 
 def test_review_contract_preserves_fail_and_warn_from_checks():
@@ -22,3 +22,64 @@ def test_review_contract_does_not_call_real_llm_in_unit_test():
         with patch("app.capabilities.contract_review.service.run_review_pipeline", return_value=[]):
             review_contract(request, check_time="2026-07-07T10:00:00")
     fake_invoke.assert_not_called()
+
+
+def test_review_contract_blocks_when_declared_attachments_missing():
+    request = ContractReviewRequest(
+        contract_md="# 合同\n正文声明附件共3份",
+        attachments=[
+            AttachmentInput(index=1, filename="附件一.xlsx", text="附件一"),
+            AttachmentInput(index=2, filename="附件二.xlsx", text="附件二"),
+        ],
+    )
+    with patch("app.capabilities.contract_review.service.run_review_pipeline") as fake_pipeline:
+        fake_pipeline.return_value = [
+            {"id": "附件检查-数量标题", "name": "附件数量/标题一致性", "result": "FAIL", "block_level": "硬阻断", "reason": "正文声明附件3份，实际仅获取到2份"}
+        ]
+        data = review_contract(request, check_time="2026-07-07T10:00:00")
+    assert data.overall_result == "BLOCK"
+    assert data.checks[0].reason == "正文声明附件3份，实际仅获取到2份"
+
+
+def test_run_review_pipeline_uses_llm_adapter_and_preset_fetch():
+    request = ContractReviewRequest(
+        contract_md="# 合同\n甲方：客户公司\n乙方：我方公司\n附件共3份",
+        attachments=[
+            AttachmentInput(index=1, filename="附件一.xlsx", text="附件一"),
+            AttachmentInput(index=2, filename="附件二.xlsx", text="附件二"),
+        ],
+    )
+    outputs = [
+        '{"header":{"contract_name":"测试合同","contract_number":"HT-1","signing_location":"沈阳","signing_date":"2026年7月8日","parties":[{"role":"甲方","name":"客户公司"},{"role":"乙方","name":"我方公司"}]},"signature_parties":[{"role":"甲方","name":"客户公司"},{"role":"乙方","name":"我方公司"}],"sections":[]}',
+        '{"signature":{"role":"乙方","name":"我方公司","legal_rep_name":"张三","signing_date":"2026年7月8日","bank_name":"招商银行","bank_account":"123456","account_holder":"我方公司","address":"地址","phone":"024-12345678","fax":"","website":"","postal_code":"110000"}}',
+        '{"currency":"人民币","payment_method":"电汇","total_amount_numeric":"100","total_amount_uppercase":"壹佰元整","total_amount_match":true,"payment_stages":[]}',
+        '{"copies":{"total_copies":2,"party_copies":[{"role":"甲方","copies":1},{"role":"乙方","copies":1}]},"attachments_declared":[{"index":1,"title":"附件一","content_embedded_in_contract":false},{"index":2,"title":"附件二","content_embedded_in_contract":false},{"index":3,"title":"附件三","content_embedded_in_contract":false}],"total_declared":3}',
+        '{"checks":[]}',
+        '{"checks":[]}',
+        '{"checks":[]}',
+    ]
+
+    def fake_invoke(model, messages):
+        return outputs.pop(0), {"total_tokens": 1}
+
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
+            with patch("app.capabilities.contract_review.service.fetch_preset") as fake_fetch:
+                fake_fetch.return_value = SystemPreset(
+                    entity_name="我方公司",
+                    legal_rep_name="张三",
+                    legal_rep_id_number="",
+                    authorized_reps=[],
+                    bank_name="招商银行",
+                    bank_account="123456",
+                    account_holder="我方公司",
+                    address="地址",
+                    phone="024-12345678",
+                    fax="",
+                    website="",
+                    postal_code="110000",
+                )
+                items = run_review_pipeline(request)
+
+    assert fake_fetch.call_args.args == ("我方公司",)
+    assert any(item.id == "附件检查-数量标题" and item.result == "FAIL" for item in items)
