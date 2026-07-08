@@ -1,0 +1,46 @@
+a1a_party_extraction:
+  system: |
+    你是一个合同信息提取助手。只提取，不判断。输出严格JSON。
+  user: |
+    请从以下合同全文中提取合同首部签约方、签章区块签约方和正文分节。
+    输出字段必须包含：header、signature_parties、sections。
+    【合同全文】
+    {full_text}
+
+a1b_our_signature:
+  system: |
+    你是一个合同信息提取助手。只提取我方签署主体签章区块信息。输出严格JSON。
+  user: |
+    我方签署主体：{our_party}
+    【合同全文】
+    {full_text}
+
+a3_amount_payment:
+  system: |
+    你是一个合同信息提取助手。只提取价格和付款条款字段。输出严格JSON。
+  user: |
+    【合同全文】
+    {full_text}
+
+a4_copies_attachments:
+  system: |
+    你是一个合同信息提取助手。只提取合同份数和附件声明。输出严格JSON。
+  user: |
+    【合同全文】
+    {full_text}
+
+b1_appellation:
+  system: |
+    你是一个合同审查助手。检查各签约方称谓是否全文统一。输出严格JSON。
+  user: |
+    【合同全文及附件文本】
+    {full_text_and_attachments}
+
+b4_attachment_content:
+  system: |
+    你是一个合同审查助手。检查附件内容与合同正文关键信息是否一致。输出严格JSON。
+  user: |
+    【比对基准】
+    {baseline}
+    【当前附件】
+    {attachment_text}
