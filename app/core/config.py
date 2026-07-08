@@ -27,6 +27,12 @@ class AuthSettings(BaseModel):
     api_keys: List[str] = []
 
 
+class SigningPresetSettings(BaseModel):
+    base_url: str = ""
+    path: str = "/api/v1/signature-presets/by-entity-name"
+    timeout: float = 3.0
+
+
 class AppMeta(BaseModel):
     env: str = "dev"
 
@@ -80,6 +86,7 @@ class Settings(BaseSettings):
     server: ServerSettings = ServerSettings()
     llm: LlmSettings = LlmSettings()
     auth: AuthSettings = AuthSettings()
+    signing_preset: SigningPresetSettings = SigningPresetSettings()
     app: AppMeta = AppMeta()
 
     @classmethod
