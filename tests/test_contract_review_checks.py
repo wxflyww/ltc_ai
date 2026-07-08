@@ -1,6 +1,7 @@
 from app.capabilities.contract_review.checks import (
     build_check_items,
     build_review_data,
+    check_amount_payment,
     check_seq1,
     check_seq2_11,
     check_seq3,
@@ -137,3 +138,35 @@ def test_seq3_passes_when_signature_date_empty():
     sig.signing_date = None
     item = check_seq3(_header(), sig, OurPartyContext(role="卖方", name="我方公司"))
     assert item.result == "PASS"
+
+
+def test_payment_method_missing_fails():
+    items = check_amount_payment({"currency": "人民币", "payment_method": None, "total_amount_numeric": "100", "total_amount_uppercase": "壹佰元整", "payment_stages": []})
+    seq9 = next(item for item in items if item.id == "序号9")
+    assert seq9.result == "FAIL"
+
+
+def test_empty_payment_stages_warns_not_fail():
+    items = check_amount_payment({"currency": "人民币", "payment_method": "电汇", "total_amount_numeric": "100", "total_amount_uppercase": "壹佰元整", "payment_stages": []})
+    seq10 = next(item for item in items if item.id == "序号10")
+    assert seq10.result == "WARN"
+    assert "付款阶段不明确" in seq10.reason
+
+
+def test_currency_missing_fails():
+    items = check_amount_payment({"currency": None, "payment_method": "电汇", "total_amount_numeric": "100", "total_amount_uppercase": "壹佰元整", "payment_stages": []})
+    seq8 = next(item for item in items if item.id == "序号8")
+    assert seq8.result == "FAIL"
+
+
+def test_stage_percentage_not_100_fails():
+    items = check_amount_payment({
+        "currency": "人民币",
+        "payment_method": "电汇",
+        "total_amount_numeric": "100",
+        "total_amount_uppercase": "壹佰元整",
+        "payment_stages": [{"stage_name": "首付款", "percentage": "50", "amount_numeric": "50", "amount_uppercase": "伍拾元整"}],
+    })
+    seq10 = next(item for item in items if item.id == "序号10")
+    assert seq10.result == "FAIL"
+    assert "不等于100%" in seq10.reason

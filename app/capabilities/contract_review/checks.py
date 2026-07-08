@@ -1,4 +1,5 @@
 from datetime import date
+from decimal import Decimal, InvalidOperation
 
 from app.capabilities.contract_review.schemas import (
     HeaderInfo,
@@ -198,3 +199,75 @@ def check_seq3(header: HeaderInfo, signature: SignatureInfo, our_party: OurParty
     if hard:
         return CheckItem(id="序号3", name="签署日期", result="FAIL", block_level="硬阻断", reason="；".join(hard))
     return CheckItem(id="序号3", name="签署日期", result="PASS", block_level="通过", reason=None)
+
+
+def _to_decimal(value) -> Decimal | None:
+    if is_empty(value):
+        return None
+    text = str(value).replace(",", "").replace("，", "").replace("%", "").strip()
+    try:
+        return Decimal(text)
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def _make_single_check(item_id: str, name: str, hard: list[str], warn: list[str]) -> CheckItem:
+    if hard:
+        return CheckItem(id=item_id, name=name, result="FAIL", block_level="硬阻断", reason="；".join(hard))
+    if warn:
+        return CheckItem(id=item_id, name=name, result="WARN", block_level="提示", reason="；".join(warn))
+    return CheckItem(id=item_id, name=name, result="PASS", block_level="通过", reason=None)
+
+
+def check_amount_payment(a3_result: dict) -> list[CheckItem]:
+    total_numeric = _to_decimal(a3_result.get("total_amount_numeric"))
+    total_uppercase = a3_result.get("total_amount_uppercase")
+    amount_match = a3_result.get("total_amount_match")
+    currency = a3_result.get("currency")
+    payment_method = a3_result.get("payment_method")
+    stages = a3_result.get("payment_stages") or []
+
+    seq7_hard: list[str] = []
+    if total_numeric is None or is_empty(total_uppercase):
+        seq7_hard.append("合同总价金额或大写金额缺失，无法校验总价大小写一致性")
+    elif amount_match is False:
+        seq7_hard.append("合同总价大小写金额不一致")
+
+    seq8_hard: list[str] = []
+    if is_empty(currency):
+        seq8_hard.append("币种缺失")
+
+    seq9_hard: list[str] = []
+    if is_empty(payment_method):
+        seq9_hard.append("付款方式缺失")
+
+    seq10_hard: list[str] = []
+    seq10_warn: list[str] = []
+    if not stages:
+        seq10_warn.append("付款阶段不明确")
+    else:
+        percentages: list[Decimal] = []
+        stage_amounts: list[Decimal] = []
+        for index, stage in enumerate(stages, start=1):
+            percentage = _to_decimal(stage.get("percentage"))
+            amount = _to_decimal(stage.get("amount_numeric"))
+            if percentage is None:
+                seq10_warn.append(f"第{index}个付款阶段比例缺失或格式无法识别")
+            else:
+                percentages.append(percentage)
+            if amount is None:
+                seq10_warn.append(f"第{index}个付款阶段金额缺失或格式无法识别")
+            else:
+                stage_amounts.append(amount)
+
+        if percentages and sum(percentages) != Decimal("100"):
+            seq10_hard.append(f"付款阶段比例合计{sum(percentages)}%，不等于100%")
+        if total_numeric is not None and stage_amounts and sum(stage_amounts) != total_numeric:
+            seq10_hard.append(f"付款阶段金额合计{sum(stage_amounts)}，与合同总价{total_numeric}不一致")
+
+    return [
+        _make_single_check("序号7", "总价大小写一致性", seq7_hard, []),
+        _make_single_check("序号8", "货币条款", seq8_hard, []),
+        _make_single_check("序号9", "付款方式", seq9_hard, []),
+        _make_single_check("序号10", "付款阶段校验", seq10_hard, seq10_warn),
+    ]
