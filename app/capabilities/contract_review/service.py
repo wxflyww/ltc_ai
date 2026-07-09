@@ -13,6 +13,7 @@ from app.capabilities.contract_review.checks import (
 from app.capabilities.contract_review.preset_client import fetch_preset, identify_our_party
 from app.capabilities.contract_review.party import build_candidate_parties
 from app.capabilities.contract_review.prompts import build_prompt, parse_json_object
+from app.capabilities.contract_review.response_formats import get_response_format
 from app.capabilities.contract_review.schemas import (
     CheckItem,
     ContractReviewData,
@@ -31,24 +32,45 @@ def _require_keys(payload: dict, keys: list[str], prompt_name: str) -> None:
         raise ModelFormatError(f"{prompt_name}模型输出缺少字段：{', '.join(missing)}")
 
 
-def _invoke_json_prompt(prompt_name: str, **kwargs) -> dict:
+def _invoke_json_prompt(
+    prompt_name: str,
+    *,
+    required_keys: list[str] | None = None,
+    validation_label: str | None = None,
+    **kwargs,
+) -> dict:
     model = get_chat_model()
     messages = build_prompt(prompt_name, **kwargs)
-    content, _usage = invoke_model(model, messages)
+    response_format = get_response_format(prompt_name)
+
+    def parse_and_validate(raw_content: str) -> dict:
+        payload = parse_json_object(raw_content)
+        if required_keys:
+            _require_keys(payload, required_keys, validation_label or prompt_name)
+        return payload
+
+    content, _usage = invoke_model(model, messages, response_format=response_format)
     try:
-        return parse_json_object(content)
+        return parse_and_validate(content)
     except ModelFormatError as first_error:
         retry_messages = [
             *messages,
             HumanMessage(content=(
-                "上一次输出不是合法JSON。请只返回一个JSON对象，"
-                "不要解释、不要markdown代码块、不要<think>内容。"
+                "上一次输出不是符合要求的JSON。请只返回一个JSON对象，"
+                "不要解释、不要markdown代码块、不要<think>内容；"
+                "必须严格包含提示词要求的顶层字段和JSON结构。"
             )),
         ]
-        retry_content, _retry_usage = invoke_model(model, retry_messages)
+        retry_content, _retry_usage = invoke_model(
+            model,
+            retry_messages,
+            response_format=response_format,
+        )
         try:
-            return parse_json_object(retry_content)
+            return parse_and_validate(retry_content)
         except ModelFormatError as second_error:
+            if required_keys and (validation_label or prompt_name) in second_error.message:
+                raise second_error from first_error
             raise ModelFormatError(f"{prompt_name}{second_error.message}") from first_error
 
 
@@ -85,7 +107,12 @@ def _parse_model_checks(payload: dict, item_id: str, item_name: str) -> list[Che
 
 
 def _run_b1(full_text_and_attachments: str) -> list[CheckItem]:
-    payload = _invoke_json_prompt("b1_appellation", full_text_and_attachments=full_text_and_attachments)
+    payload = _invoke_json_prompt(
+        "b1_appellation",
+        required_keys=["checks"],
+        validation_label="B-1",
+        full_text_and_attachments=full_text_and_attachments,
+    )
     return _parse_model_checks(payload, "B-1", "称谓一致性")
 
 
@@ -94,6 +121,8 @@ def _run_b4(resolved_attachments: list[dict], baseline: dict) -> list[CheckItem]
     for attachment in resolved_attachments:
         payload = _invoke_json_prompt(
             "b4_attachment_content",
+            required_keys=["checks"],
+            validation_label="B-4",
             baseline=baseline,
             attachment_text=attachment.get("text", ""),
         )
@@ -106,7 +135,12 @@ def _run_b4(resolved_attachments: list[dict], baseline: dict) -> list[CheckItem]
 def run_review_pipeline(request: ContractReviewRequest) -> list[CheckItem | dict]:
     prepared = _preprocess_request(request)
 
-    a1a = _invoke_json_prompt("a1a_party_extraction", full_text=prepared["full_text"])
+    a1a = _invoke_json_prompt(
+        "a1a_party_extraction",
+        required_keys=["header", "signature_parties", "sections"],
+        validation_label="A-1a",
+        full_text=prepared["full_text"],
+    )
     _require_keys(a1a, ["header", "signature_parties", "sections"], "A-1a")
     header = HeaderInfo.model_validate(a1a["header"])
 
@@ -121,7 +155,13 @@ def run_review_pipeline(request: ContractReviewRequest) -> list[CheckItem | dict
     our_party, preset = identify_our_party(header.parties, fetch_preset)
 
     if our_party is not None:
-        a1b = _invoke_json_prompt("a1b_our_signature", our_party=our_party.name, full_text=prepared["full_text"])
+        a1b = _invoke_json_prompt(
+            "a1b_our_signature",
+            required_keys=["signature"],
+            validation_label="A-1b",
+            our_party=our_party.name,
+            full_text=prepared["full_text"],
+        )
         _require_keys(a1b, ["signature"], "A-1b")
         signature = SignatureInfo.model_validate({
             **a1b["signature"],
@@ -146,7 +186,12 @@ def run_review_pipeline(request: ContractReviewRequest) -> list[CheckItem | dict
     a3 = _invoke_json_prompt("a3_amount_payment", full_text=prepared["full_text"])
     items.extend(check_amount_payment(a3))
 
-    a4 = _invoke_json_prompt("a4_copies_attachments", full_text=prepared["full_text"])
+    a4 = _invoke_json_prompt(
+        "a4_copies_attachments",
+        required_keys=["copies", "attachments_declared"],
+        validation_label="A-4",
+        full_text=prepared["full_text"],
+    )
     _require_keys(a4, ["copies", "attachments_declared"], "A-4")
     attachment_result = check_copies_and_attachments(
         a4,

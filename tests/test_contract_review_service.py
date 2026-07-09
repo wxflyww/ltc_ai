@@ -61,7 +61,7 @@ def test_run_review_pipeline_uses_llm_adapter_and_preset_fetch():
         '{"checks":[]}',
     ]
 
-    def fake_invoke(model, messages):
+    def fake_invoke(model, messages, response_format=None):
         return outputs.pop(0), {"total_tokens": 1}
 
     with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
@@ -96,7 +96,7 @@ def test_run_review_pipeline_reports_candidate_when_preset_lookup_misses():
         '{"checks":[]}',
     ]
 
-    def fake_invoke(model, messages):
+    def fake_invoke(model, messages, response_format=None):
         return outputs.pop(0), {"total_tokens": 1}
 
     with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
@@ -112,7 +112,7 @@ def test_run_review_pipeline_reports_candidate_when_preset_lookup_misses():
 def test_invoke_json_prompt_retries_once_when_model_returns_non_json():
     outputs = ["不是JSON", '{"ok": true}']
 
-    def fake_invoke(model, messages):
+    def fake_invoke(model, messages, response_format=None):
         return outputs.pop(0), {"total_tokens": 1}
 
     with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
@@ -121,6 +121,77 @@ def test_invoke_json_prompt_retries_once_when_model_returns_non_json():
 
     assert result == {"ok": True}
     assert mocked.call_count == 2
+
+
+def test_invoke_json_prompt_passes_json_schema_response_format():
+    captured_response_formats = []
+
+    def fake_invoke(model, messages, response_format=None):
+        captured_response_formats.append(response_format)
+        return (
+            '{"header":{"contract_name":null,"project_name":null,"contract_number":null,'
+            '"signing_location":null,"signing_date":null,"parties":[]},'
+            '"signature_parties":[],"sections":[]}',
+            {"total_tokens": 1},
+        )
+
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
+            result = _invoke_json_prompt("a1a_party_extraction", full_text="合同正文")
+
+    assert result["header"]["parties"] == []
+    assert captured_response_formats
+    response_format = captured_response_formats[0]
+    assert response_format["type"] == "json_schema"
+    schema = response_format["json_schema"]["schema"]
+    assert schema["required"] == ["header", "signature_parties", "sections"]
+    assert schema["properties"]["header"]["required"] == [
+        "contract_name",
+        "project_name",
+        "contract_number",
+        "signing_location",
+        "signing_date",
+        "parties",
+    ]
+
+
+def test_invoke_json_prompt_retries_when_required_schema_keys_missing():
+    outputs = [
+        '{"contract_name":"合同","parties":[]}',
+        (
+            '{"header":{"contract_name":"合同","project_name":null,"contract_number":null,'
+            '"signing_location":null,"signing_date":null,"parties":[]},'
+            '"signature_parties":[],"sections":[]}'
+        ),
+    ]
+
+    def fake_invoke(model, messages, response_format=None):
+        return outputs.pop(0), {"total_tokens": 1}
+
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke) as mocked:
+            result = _invoke_json_prompt(
+                "a1a_party_extraction",
+                required_keys=["header", "signature_parties", "sections"],
+                full_text="合同正文",
+            )
+
+    assert result["header"]["contract_name"] == "合同"
+    assert mocked.call_count == 2
+
+
+def test_invoke_json_prompt_keeps_prompt_name_for_json_parse_error_with_required_keys():
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", return_value=("不是JSON", {"total_tokens": 1})):
+            with pytest.raises(ModelFormatError) as exc:
+                _invoke_json_prompt(
+                    "a1a_party_extraction",
+                    required_keys=["header", "signature_parties", "sections"],
+                    validation_label="A-1a",
+                    full_text="合同正文",
+                )
+
+    assert "a1a_party_extraction模型输出不是合法JSON" in str(exc.value)
 
 
 def test_invoke_json_prompt_error_message_includes_prompt_name_after_retry_fails():

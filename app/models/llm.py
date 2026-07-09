@@ -40,12 +40,19 @@ def _reset_chat_model() -> None:
     _chat_model = None
 
 
-def invoke_model(model: BaseChatModel, messages: list) -> tuple[str, dict]:
+def invoke_model(
+    model: BaseChatModel,
+    messages: list,
+    response_format: dict | None = None,
+) -> tuple[str, dict]:
     """调用模型，返回 (content, token_usage)。超时转 ModelTimeoutError，其他错误原样抛出。"""
     model_name = getattr(model, "model_name", "") or getattr(model, "model", "unknown")
     start = time.perf_counter()
     try:
-        resp = model.invoke(messages)
+        if response_format is None:
+            resp = model.invoke(messages)
+        else:
+            resp = model.invoke(messages, response_format=response_format)
     except TimeoutError as e:
         llm_calls_total.labels(model=model_name, status="timeout").inc()
         raise ModelTimeoutError(str(e)) from e
