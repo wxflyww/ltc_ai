@@ -10,6 +10,7 @@ LTC（Lead to Cash）系统的 AI 中台能力层。提供健康检查、文本�
 | GET | `/metrics` | 否 | Prometheus 指标 |
 | POST | `/api/v1/translate` | 是 | 文本翻译 |
 | POST | `/api/v1/contract-review` | 是 | 合同组织评审 |
+| POST | `/api/v1/contract-review/upload-md` | 是 | 上传解析后的 Markdown 合同与附件进行组织评审 |
 
 ### 翻译示例
 
@@ -35,6 +36,20 @@ curl -X POST http://localhost:8000/api/v1/translate \
 错误响应同样带 `traceId` 和 `duration_seconds`。错误码：`0` 成功；`1xxxx` 客户端错误（`10001` 参数校验、`10002` 鉴权失败）；`2xxxx` 服务端错误（`20001` 模型调用失败重试耗尽、`20002` 超时、`20003` 格式异常、`29999` 未知）。
 
 ### 合同组织评审示例
+
+正式业务流程推荐上传解析后的 Markdown 文件：
+
+```bash
+curl -X POST http://localhost:8000/api/v1/contract-review/upload-md \
+  -H "X-API-Key: <your-key>" \
+  -F "contract_file=@合同正文.md;type=text/markdown" \
+  -F "attachment_files=@附件一.md;type=text/markdown" \
+  -F "attachment_files=@附件二.md;type=text/markdown"
+```
+
+系统会按上传顺序为附件生成 `index=1,2,3...`，并复用同一套合同组织评审规则。
+
+JSON 调用保留用于自动化联调：
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/contract-review \
