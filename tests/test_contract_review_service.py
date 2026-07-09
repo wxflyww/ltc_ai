@@ -1,7 +1,9 @@
 from unittest.mock import patch
 
 from app.capabilities.contract_review.schemas import AttachmentInput, ContractReviewRequest, SystemPreset
-from app.capabilities.contract_review.service import review_contract, run_review_pipeline
+from app.capabilities.contract_review.service import _invoke_json_prompt, review_contract, run_review_pipeline
+from app.core.errors import ModelFormatError
+import pytest
 
 
 def test_review_contract_preserves_fail_and_warn_from_checks():
@@ -83,3 +85,26 @@ def test_run_review_pipeline_uses_llm_adapter_and_preset_fetch():
 
     assert fake_fetch.call_args.args == ("我方公司",)
     assert any(item.id == "附件检查-数量标题" and item.result == "FAIL" for item in items)
+
+
+def test_invoke_json_prompt_retries_once_when_model_returns_non_json():
+    outputs = ["不是JSON", '{"ok": true}']
+
+    def fake_invoke(model, messages):
+        return outputs.pop(0), {"total_tokens": 1}
+
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke) as mocked:
+            result = _invoke_json_prompt("a1a_party_extraction", full_text="合同正文")
+
+    assert result == {"ok": True}
+    assert mocked.call_count == 2
+
+
+def test_invoke_json_prompt_error_message_includes_prompt_name_after_retry_fails():
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", return_value=("不是JSON", {"total_tokens": 1})):
+            with pytest.raises(ModelFormatError) as exc:
+                _invoke_json_prompt("a1a_party_extraction", full_text="合同正文")
+
+    assert "a1a_party_extraction模型输出不是合法JSON" in str(exc.value)

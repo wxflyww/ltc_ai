@@ -1,6 +1,7 @@
 llm:
   base_url: "http://192.168.16.10:8080/v1"
-  model: "qwen3.6-35b-a3b"
+  model: "Qwen3.6-35B"
+  timeout: 300
   # api_key 通过 .env 文件或环境变量 LTC__LLM__API_KEY 配置
 
 signing_preset:

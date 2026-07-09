@@ -26,14 +26,37 @@ def build_prompt(name: str, **kwargs) -> list[BaseMessage]:
     ]
 
 
-def parse_json_object(content: str) -> dict:
-    text = content.strip()
+def _strip_think_blocks(text: str) -> str:
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.S | re.I).strip()
+
+
+def _strip_fenced_block(text: str) -> str:
     match = re.match(r"^```(?:json|JSON)?\s*(.*?)\s*```$", text, re.S)
-    if match:
-        text = match.group(1).strip()
+    return match.group(1).strip() if match else text
+
+
+def _extract_json_object(text: str) -> dict | None:
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(text):
+        if char != "{":
+            continue
+        try:
+            parsed, _end = decoder.raw_decode(text[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
+def parse_json_object(content: str) -> dict:
+    text = _strip_fenced_block(_strip_think_blocks(content.strip()))
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError as exc:
+        extracted = _extract_json_object(text)
+        if extracted is not None:
+            return extracted
         raise ModelFormatError("模型输出不是合法JSON") from exc
     if not isinstance(parsed, dict):
         raise ModelFormatError("模型输出JSON不是对象")

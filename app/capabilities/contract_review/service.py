@@ -1,5 +1,7 @@
 from datetime import datetime
 
+from langchain_core.messages import HumanMessage
+
 from app.capabilities.contract_review.attachments import check_copies_and_attachments
 from app.capabilities.contract_review.checks import (
     build_review_data,
@@ -29,8 +31,23 @@ def _require_keys(payload: dict, keys: list[str], prompt_name: str) -> None:
 
 def _invoke_json_prompt(prompt_name: str, **kwargs) -> dict:
     model = get_chat_model()
-    content, _usage = invoke_model(model, build_prompt(prompt_name, **kwargs))
-    return parse_json_object(content)
+    messages = build_prompt(prompt_name, **kwargs)
+    content, _usage = invoke_model(model, messages)
+    try:
+        return parse_json_object(content)
+    except ModelFormatError as first_error:
+        retry_messages = [
+            *messages,
+            HumanMessage(content=(
+                "上一次输出不是合法JSON。请只返回一个JSON对象，"
+                "不要解释、不要markdown代码块、不要<think>内容。"
+            )),
+        ]
+        retry_content, _retry_usage = invoke_model(model, retry_messages)
+        try:
+            return parse_json_object(retry_content)
+        except ModelFormatError as second_error:
+            raise ModelFormatError(f"{prompt_name}{second_error.message}") from first_error
 
 
 def _preprocess_request(request: ContractReviewRequest) -> dict:

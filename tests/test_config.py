@@ -11,9 +11,9 @@ def test_loads_default_then_env_override(tmp_path, monkeypatch):
     # 默认基线值
     assert settings.server.port == 8000
     assert settings.llm.temperature == 0.3
-    assert settings.llm.timeout == 30
     # dev 覆盖
     assert settings.llm.base_url == "http://192.168.16.10:8080/v1"
+    assert settings.llm.timeout == 300
     # env 标记
     assert settings.app.env == "dev"
 

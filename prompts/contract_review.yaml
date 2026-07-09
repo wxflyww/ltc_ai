@@ -1,45 +1,115 @@
 a1a_party_extraction:
   system: |
-    你是一个合同信息提取助手。只提取，不判断。输出严格JSON。
+    你是一个合同信息提取助手。只提取，不判断。
+    【重要】只输出纯JSON，不要任何解释文字、不要markdown代码块，直接输出JSON对象。
   user: |
     请从以下合同全文中提取合同首部签约方、签章区块签约方和正文分节。
     输出字段必须包含：header、signature_parties、sections。
+    JSON结构示例：
+    {{
+      "header": {{
+        "contract_name": null,
+        "contract_number": null,
+        "signing_location": null,
+        "signing_date": null,
+        "parties": [{{"role": "甲方", "name": "客户公司"}}]
+      }},
+      "signature_parties": [{{"role": "乙方", "name": "我方公司"}}],
+      "sections": [{{"title": "附件一", "content": "附件正文内容"}}]
+    }}
     【合同全文】
     {full_text}
 
 a1b_our_signature:
   system: |
-    你是一个合同信息提取助手。只提取我方签署主体签章区块信息。输出严格JSON。
+    你是一个合同信息提取助手。只提取我方签署主体签章区块信息。
+    【重要】只输出纯JSON，不要任何解释文字、不要markdown代码块，直接输出JSON对象。
   user: |
     我方签署主体：{our_party}
+    JSON结构示例：
+    {{
+      "signature": {{
+        "role": "乙方",
+        "name": "{our_party}",
+        "legal_rep_name": null,
+        "signer_id_number": null,
+        "signing_date": null,
+        "bank_name": null,
+        "bank_account": null,
+        "account_holder": null,
+        "address": null,
+        "phone": null,
+        "fax": null,
+        "website": null,
+        "postal_code": null
+      }}
+    }}
     【合同全文】
     {full_text}
 
 a3_amount_payment:
   system: |
-    你是一个合同信息提取助手。只提取价格和付款条款字段。输出严格JSON。
+    你是一个合同信息提取助手。只提取价格和付款条款字段。
+    【重要】只输出纯JSON，不要任何解释文字、不要markdown代码块，直接输出JSON对象。
   user: |
+    JSON结构示例：
+    {{
+      "currency": "人民币",
+      "payment_method": "电汇",
+      "total_amount_numeric": "100",
+      "total_amount_uppercase": "壹佰元整",
+      "total_amount_match": true,
+      "payment_stages": [
+        {{"stage_name": "首付款", "percentage": "50", "amount_numeric": "50", "amount_uppercase": "伍拾元整"}}
+      ]
+    }}
     【合同全文】
     {full_text}
 
 a4_copies_attachments:
   system: |
-    你是一个合同信息提取助手。只提取合同份数和附件声明。输出严格JSON。
+    你是一个合同信息提取助手。只提取合同份数和附件声明。
+    【重要】只输出纯JSON，不要任何解释文字、不要markdown代码块，直接输出JSON对象。
   user: |
+    JSON结构示例：
+    {{
+      "copies": {{
+        "total_copies": 2,
+        "party_copies": [{{"role": "甲方", "copies": 1}}, {{"role": "乙方", "copies": 1}}]
+      }},
+      "attachments_declared": [
+        {{"index": 1, "title": "附件一", "content_embedded_in_contract": false, "section_heading_hint": null}}
+      ],
+      "total_declared": 1
+    }}
     【合同全文】
     {full_text}
 
 b1_appellation:
   system: |
-    你是一个合同审查助手。检查各签约方称谓是否全文统一。输出严格JSON。
+    你是一个合同审查助手。检查各签约方称谓是否全文统一。
+    【重要】只输出纯JSON，不要任何解释文字、不要markdown代码块，直接输出JSON对象。
   user: |
+    JSON结构示例：
+    {{
+      "checks": [
+        {{"result": "WARN", "block_level": "提示", "reason": "称谓存在不一致"}}
+      ]
+    }}
     【合同全文及附件文本】
     {full_text_and_attachments}
 
 b4_attachment_content:
   system: |
-    你是一个合同审查助手。检查附件内容与合同正文关键信息是否一致。输出严格JSON。
+    你是一个合同审查助手。检查附件内容与合同正文关键信息是否一致。
+    【重要】只输出纯JSON，不要任何解释文字、不要markdown代码块，直接输出JSON对象。
   user: |
+    JSON结构示例：
+    {{
+      "checks": [
+        {{"result": "FAIL", "block_level": "硬阻断", "reason": "附件金额与合同正文金额不一致"}}
+      ]
+    }}
     【比对基准】
     {baseline}
     【当前附件】
