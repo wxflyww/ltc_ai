@@ -6,6 +6,7 @@ from app.capabilities.contract_review.schemas import (
     CheckItem,
     ContractReviewData,
     ContractReviewRequest,
+    HeaderInfo,
 )
 
 
@@ -46,3 +47,8 @@ def test_review_data_keeps_duplicate_ids_in_list():
         ],
     )
     assert [item.result for item in data.checks] == ["FAIL", "WARN"]
+
+
+def test_header_info_accepts_project_name():
+    header = HeaderInfo(project_name="项目名称")
+    assert header.project_name == "项目名称"

@@ -104,6 +104,57 @@ def test_seq1_fails_when_preset_unavailable():
     assert "无法校验我方签署主体名称" in items[0].reason
 
 
+def test_seq1_uses_project_name_when_contract_title_is_generic():
+    header = HeaderInfo(
+        contract_name="合同",
+        project_name="广西壮族自治区渐进式延迟法定退休年龄养老保险和社会保险费统模式信息系统建设",
+        contract_number="HT-1",
+        signing_location="南宁",
+        signing_date="2026年7月9日",
+        parties=[ContractParty(role="乙方", name="我方公司")],
+    )
+    items = check_seq1(header, OurPartyContext(role="乙方", name="我方公司"), _preset())
+    assert all("合同名称缺失" not in (item.reason or "") for item in items)
+
+
+def test_seq1_reports_no_candidate_when_party_extraction_misses_supplier():
+    header = HeaderInfo(
+        contract_name="测试合同",
+        contract_number="HT-1",
+        signing_location="南宁",
+        signing_date="2026年7月9日",
+        parties=[ContractParty(role="甲方", name="客户公司")],
+    )
+    items = check_seq1(header, None, None, candidate_names=[], preset_configured=True)
+    assert items[0].result == "FAIL"
+    assert "未提取到我方候选主体" in items[0].reason
+
+
+def test_seq1_reports_candidate_names_when_preset_lookup_misses():
+    items = check_seq1(
+        _header(),
+        None,
+        None,
+        candidate_names=["东软集团股份有限公司"],
+        preset_configured=True,
+    )
+    assert items[0].result == "FAIL"
+    assert "已提取我方候选主体：东软集团股份有限公司" in items[0].reason
+    assert "签署地预设值接口未命中" in items[0].reason
+
+
+def test_seq1_reports_preset_service_not_configured():
+    items = check_seq1(
+        _header(),
+        None,
+        None,
+        candidate_names=["东软集团股份有限公司"],
+        preset_configured=False,
+    )
+    assert items[0].result == "FAIL"
+    assert "签署地预设值服务未配置" in items[0].reason
+
+
 def test_seq2_11_preserves_fail_and_warn():
     sig = _signature()
     sig.bank_account = "999999"

@@ -12,6 +12,11 @@ def test_build_prompt_returns_system_and_human_messages():
     assert "合同正文" in messages[1].content
 
 
+def test_a1a_prompt_requires_project_name():
+    messages = build_prompt("a1a_party_extraction", full_text="合同正文")
+    assert "project_name" in messages[1].content
+
+
 def test_parse_json_object_accepts_plain_json():
     assert parse_json_object('{"x": 1}') == {"x": 1}
 

@@ -11,6 +11,7 @@ from app.capabilities.contract_review.checks import (
     check_seq3,
 )
 from app.capabilities.contract_review.preset_client import fetch_preset, identify_our_party
+from app.capabilities.contract_review.party import build_candidate_parties
 from app.capabilities.contract_review.prompts import build_prompt, parse_json_object
 from app.capabilities.contract_review.schemas import (
     CheckItem,
@@ -19,6 +20,7 @@ from app.capabilities.contract_review.schemas import (
     HeaderInfo,
     SignatureInfo,
 )
+from app.core.config import get_settings
 from app.core.errors import ModelFormatError
 from app.models.llm import get_chat_model, invoke_model
 
@@ -108,6 +110,14 @@ def run_review_pipeline(request: ContractReviewRequest) -> list[CheckItem | dict
     _require_keys(a1a, ["header", "signature_parties", "sections"], "A-1a")
     header = HeaderInfo.model_validate(a1a["header"])
 
+    seen_candidate_names: set[str] = set()
+    candidate_names: list[str] = []
+    for party in build_candidate_parties(header.parties):
+        name = (party.name or "").strip()
+        if name and name not in seen_candidate_names:
+            candidate_names.append(name)
+            seen_candidate_names.add(name)
+    preset_configured = bool(get_settings().signing_preset.base_url)
     our_party, preset = identify_our_party(header.parties, fetch_preset)
 
     if our_party is not None:
@@ -121,7 +131,13 @@ def run_review_pipeline(request: ContractReviewRequest) -> list[CheckItem | dict
         signature = SignatureInfo(signature_parties=[])
 
     items: list[CheckItem] = []
-    items.extend(check_seq1(header, our_party, preset))
+    items.extend(check_seq1(
+        header,
+        our_party,
+        preset,
+        candidate_names=candidate_names,
+        preset_configured=preset_configured,
+    ))
     seq2_items, seq11_items = check_seq2_11(header, signature, our_party, preset)
     items.extend(seq2_items)
     items.append(check_seq3(header, signature, our_party))

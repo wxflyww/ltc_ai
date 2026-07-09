@@ -5,10 +5,12 @@ a1a_party_extraction:
   user: |
     请从以下合同全文中提取合同首部签约方、签章区块签约方和正文分节。
     输出字段必须包含：header、signature_parties、sections。
+    header中必须包含project_name；若首页出现“项目名称”，填入project_name。
     JSON结构示例：
     {{
       "header": {{
         "contract_name": null,
+        "project_name": null,
         "contract_number": null,
         "signing_location": null,
         "signing_date": null,

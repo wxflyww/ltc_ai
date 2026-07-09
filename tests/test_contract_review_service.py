@@ -87,6 +87,28 @@ def test_run_review_pipeline_uses_llm_adapter_and_preset_fetch():
     assert any(item.id == "附件检查-数量标题" and item.result == "FAIL" for item in items)
 
 
+def test_run_review_pipeline_reports_candidate_when_preset_lookup_misses():
+    request = ContractReviewRequest(contract_md="# 合同\n供应商（乙方）：东软集团股份有限公司", attachments=[])
+    outputs = [
+        '{"header":{"contract_name":"合同","project_name":"项目名称","contract_number":"HT-1","signing_location":"南宁","signing_date":"2026年7月9日","parties":[{"role":"甲方","name":"客户公司"},{"role":"乙方","name":"东软集团股份有限公司"}]},"signature_parties":[{"role":"甲方","name":"客户公司"},{"role":"乙方","name":"东软集团股份有限公司"}],"sections":[]}',
+        '{"currency":"人民币","payment_method":"电汇","total_amount_numeric":"100","total_amount_uppercase":"壹佰元整","total_amount_match":true,"payment_stages":[]}',
+        '{"copies":{"total_copies":2,"party_copies":[{"role":"甲方","copies":1},{"role":"乙方","copies":1}]},"attachments_declared":[],"total_declared":0}',
+        '{"checks":[]}',
+    ]
+
+    def fake_invoke(model, messages):
+        return outputs.pop(0), {"total_tokens": 1}
+
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
+            with patch("app.capabilities.contract_review.service.fetch_preset", return_value=None):
+                items = run_review_pipeline(request)
+
+    seq1_fail = next(item for item in items if item.id == "序号1" and item.result == "FAIL")
+    assert "已提取我方候选主体：东软集团股份有限公司" in seq1_fail.reason
+    assert "合同名称缺失" not in seq1_fail.reason
+
+
 def test_invoke_json_prompt_retries_once_when_model_returns_non_json():
     outputs = ["不是JSON", '{"ok": true}']
 

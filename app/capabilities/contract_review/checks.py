@@ -24,6 +24,7 @@ NINE_FIELDS = {
 }
 
 ACCOUNT_FIELDS = {"bank_name", "bank_account", "account_holder"}
+GENERIC_CONTRACT_NAMES = {"合同", "合同书", "采购合同", "服务合同", "项目合同"}
 
 
 def build_check_items(
@@ -79,11 +80,18 @@ def check_seq1(
     header: HeaderInfo,
     our_party: OurPartyContext | None,
     preset: SystemPreset | None,
+    candidate_names: list[str] | None = None,
+    preset_configured: bool | None = None,
 ) -> list[CheckItem]:
     hard: list[str] = []
     warn: list[str] = []
 
-    if is_empty(header.contract_name):
+    contract_name = (header.contract_name or "").strip()
+    has_effective_contract_name = (
+        not is_empty(contract_name)
+        and contract_name not in GENERIC_CONTRACT_NAMES
+    ) or not is_empty(header.project_name)
+    if not has_effective_contract_name:
         hard.append("合同名称缺失")
     if is_empty(header.contract_number):
         warn.append("合同编号缺失")
@@ -93,7 +101,18 @@ def check_seq1(
         warn.append("签订日期缺失")
 
     if our_party is None or preset is None:
-        hard.append("无法校验我方签署主体名称：未命中签署地预设值")
+        if preset_configured is False:
+            hard.append("无法校验我方签署主体名称：签署地预设值服务未配置")
+        elif candidate_names == []:
+            hard.append("无法校验我方签署主体名称：未提取到我方候选主体")
+        elif candidate_names:
+            candidates = "、".join(candidate_names)
+            hard.append(
+                f"无法校验我方签署主体名称：已提取我方候选主体：{candidates}，"
+                "但签署地预设值接口未命中"
+            )
+        else:
+            hard.append("无法校验我方签署主体名称：未命中签署地预设值")
     elif to_halfwidth(our_party.name) != to_halfwidth(preset.entity_name):
         hard.append(f"我方签署主体名称（{our_party.name}）与系统预设值（{preset.entity_name}）不一致")
 
