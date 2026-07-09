@@ -42,6 +42,7 @@ class ContractParty(BaseModel):
 class HeaderInfo(BaseModel):
     contract_name: str | None = None
     project_name: str | None = None
+    project_number: str | None = None
     contract_number: str | None = None
     signing_location: str | None = None
     signing_date: str | None = None

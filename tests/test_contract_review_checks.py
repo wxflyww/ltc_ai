@@ -98,6 +98,30 @@ def test_seq1_warns_contract_number_but_passes_required_fields():
     assert "合同编号缺失" in items[0].reason
 
 
+def test_seq1_warns_contract_number_missing_when_project_number_exists():
+    header = _header()
+    header.project_number = "YZLNN2025-G3-318-GXQT"
+
+    items = check_seq1(header, OurPartyContext(role="卖方", name="我方公司"), _preset())
+
+    assert [item.result for item in items] == ["WARN"]
+    assert "合同编号缺失" in items[0].reason
+    assert "首页存在项目编号：YZLNN2025-G3-318-GXQT" in items[0].reason
+    assert "请人工确认是否需要补充合同编号" in items[0].reason
+
+
+def test_seq1_warns_when_contract_number_equals_project_number():
+    header = _header()
+    header.contract_number = "YZLNN2025-G3-318-GXQT"
+    header.project_number = "YZLNN2025-G3-318-GXQT"
+
+    items = check_seq1(header, OurPartyContext(role="卖方", name="我方公司"), _preset())
+
+    assert [item.result for item in items] == ["WARN"]
+    assert "合同编号疑似使用项目编号" in items[0].reason
+    assert "YZLNN2025-G3-318-GXQT" in items[0].reason
+
+
 def test_seq1_fails_when_preset_unavailable():
     items = check_seq1(_header(), None, None)
     assert items[0].result == "FAIL"

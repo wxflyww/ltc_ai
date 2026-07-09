@@ -93,8 +93,15 @@ def check_seq1(
     ) or not is_empty(header.project_name)
     if not has_effective_contract_name:
         hard.append("合同名称缺失")
-    if is_empty(header.contract_number):
-        warn.append("合同编号缺失")
+    contract_number = (header.contract_number or "").strip()
+    project_number = (header.project_number or "").strip()
+    if is_empty(contract_number):
+        if is_empty(project_number):
+            warn.append("合同编号缺失")
+        else:
+            warn.append(f"合同编号缺失；首页存在项目编号：{project_number}，请人工确认是否需要补充合同编号")
+    elif not is_empty(project_number) and to_halfwidth(contract_number) == to_halfwidth(project_number):
+        warn.append(f"合同编号疑似使用项目编号：{project_number}，请人工确认是否需要补充合同编号")
     if is_empty(header.signing_location):
         warn.append("签订地点缺失")
     if is_empty(header.signing_date):

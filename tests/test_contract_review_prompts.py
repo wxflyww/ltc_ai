@@ -17,6 +17,14 @@ def test_a1a_prompt_requires_project_name():
     assert "project_name" in messages[1].content
 
 
+def test_a1a_prompt_distinguishes_contract_number_and_project_number():
+    messages = build_prompt("a1a_party_extraction", full_text="合同编号：\n项目编号：P-1")
+    content = messages[1].content
+    assert "project_number" in content
+    assert "项目编号不能填入contract_number" in content
+    assert "合同编号”标签存在但后面为空" in content
+
+
 def test_parse_json_object_accepts_plain_json():
     assert parse_json_object('{"x": 1}') == {"x": 1}
 

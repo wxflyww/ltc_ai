@@ -45,6 +45,7 @@ RESPONSE_FORMATS: dict[str, dict[str, Any]] = {
                 "header": _object({
                     "contract_name": _nullable_string(),
                     "project_name": _nullable_string(),
+                    "project_number": _nullable_string(),
                     "contract_number": _nullable_string(),
                     "signing_location": _nullable_string(),
                     "signing_date": _nullable_string(),

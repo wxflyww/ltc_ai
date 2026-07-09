@@ -1,7 +1,7 @@
 from unittest.mock import patch
 
 from app.capabilities.contract_review.schemas import AttachmentInput, ContractReviewRequest, SystemPreset
-from app.capabilities.contract_review.service import _invoke_json_prompt, review_contract, run_review_pipeline
+from app.capabilities.contract_review.service import _invoke_json_prompt, _run_b1, review_contract, run_review_pipeline
 from app.core.errors import ModelFormatError
 import pytest
 
@@ -148,6 +148,7 @@ def test_invoke_json_prompt_passes_json_schema_response_format():
     assert schema["properties"]["header"]["required"] == [
         "contract_name",
         "project_name",
+        "project_number",
         "contract_number",
         "signing_location",
         "signing_date",
@@ -201,3 +202,22 @@ def test_invoke_json_prompt_error_message_includes_prompt_name_after_retry_fails
                 _invoke_json_prompt("a1a_party_extraction", full_text="合同正文")
 
     assert "a1a_party_extraction模型输出不是合法JSON" in str(exc.value)
+
+
+def test_run_b1_retries_when_reason_is_too_generic():
+    outputs = [
+        '{"checks":[{"result":"WARN","block_level":"提示","reason":"称谓存在不一致"}]}',
+        '{"checks":[{"result":"WARN","block_level":"提示","reason":"乙方称谓不一致：合同首部为“供应商（乙方）”，正文第3条使用“卖方”，请业务确认是否均指同一主体。"}]}',
+    ]
+
+    def fake_invoke(model, messages, response_format=None):
+        return outputs.pop(0), {"total_tokens": 1}
+
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke) as mocked:
+            items = _run_b1("合同正文")
+
+    assert mocked.call_count == 2
+    assert items[0].result == "WARN"
+    assert "乙方称谓不一致" in items[0].reason
+    assert "供应商（乙方）" in items[0].reason

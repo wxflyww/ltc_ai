@@ -106,6 +106,26 @@ def _parse_model_checks(payload: dict, item_id: str, item_name: str) -> list[Che
     return items
 
 
+GENERIC_B1_REASONS = {
+    "称谓存在不一致",
+    "存在称谓不一致",
+    "称谓不一致",
+    "称谓不统一",
+    "各签约方称谓存在不一致",
+    "各签约方称谓不统一",
+}
+
+
+def _has_generic_b1_reason(items: list[CheckItem]) -> bool:
+    for item in items:
+        if item.result not in {"WARN", "FAIL"}:
+            continue
+        reason = (item.reason or "").strip().rstrip("。；;")
+        if reason in GENERIC_B1_REASONS:
+            return True
+    return False
+
+
 def _run_b1(full_text_and_attachments: str) -> list[CheckItem]:
     payload = _invoke_json_prompt(
         "b1_appellation",
@@ -113,7 +133,22 @@ def _run_b1(full_text_and_attachments: str) -> list[CheckItem]:
         validation_label="B-1",
         full_text_and_attachments=full_text_and_attachments,
     )
-    return _parse_model_checks(payload, "B-1", "称谓一致性")
+    items = _parse_model_checks(payload, "B-1", "称谓一致性")
+    if not _has_generic_b1_reason(items):
+        return items
+
+    retry_payload = _invoke_json_prompt(
+        "b1_appellation",
+        required_keys=["checks"],
+        validation_label="B-1",
+        full_text_and_attachments=(
+            f"{full_text_and_attachments}\n\n"
+            "【补充要求】上一次reason过于笼统。若存在称谓不一致，"
+            "必须说明涉及哪一方或哪个主体、出现了哪些不同称谓、分别出现在哪些位置或上下文中；"
+            "禁止只输出“称谓存在不一致”“存在称谓不一致”“称谓不统一”等泛化描述。"
+        ),
+    )
+    return _parse_model_checks(retry_payload, "B-1", "称谓一致性")
 
 
 def _run_b4(resolved_attachments: list[dict], baseline: dict) -> list[CheckItem]:

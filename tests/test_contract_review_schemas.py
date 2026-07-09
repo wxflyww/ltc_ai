@@ -52,3 +52,8 @@ def test_review_data_keeps_duplicate_ids_in_list():
 def test_header_info_accepts_project_name():
     header = HeaderInfo(project_name="项目名称")
     assert header.project_name == "项目名称"
+
+
+def test_header_info_accepts_project_number():
+    header = HeaderInfo(project_number="YZLNN2025-G3-318-GXQT")
+    assert header.project_number == "YZLNN2025-G3-318-GXQT"
