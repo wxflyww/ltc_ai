@@ -49,6 +49,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         if request.url.path in _AUTH_FREE_PATHS:
             return await call_next(request)
+        if not self.allowed_keys:
+            # 未配置鉴权 Key 时跳过鉴权（如测试环境）
+            return await call_next(request)
         token = request.headers.get("X-API-Key") or _extract_bearer(request)
         if not token or token not in self.allowed_keys:
             return _auth_error_response()

@@ -6,7 +6,8 @@ from app.core.errors import ModelTimeoutError
 from app.models import llm
 
 
-def test_get_chat_model_returns_base_chat_model():
+def test_get_chat_model_returns_base_chat_model(monkeypatch):
+    monkeypatch.setenv("LTC__LLM__API_KEY", "env-llm-key")
     with patch("app.models.llm.ChatOpenAI") as mock_cls:
         mock_cls.return_value = MagicMock(name="model")
         m = llm.get_chat_model()
@@ -14,6 +15,7 @@ def test_get_chat_model_returns_base_chat_model():
         kwargs = mock_cls.call_args.kwargs
         assert kwargs["model"]  # 来自配置
         assert kwargs["base_url"] == "http://192.168.16.10:8080/v1"
+        assert kwargs["api_key"] == "env-llm-key"
 
 
 def test_invoke_model_returns_content_and_tokens():

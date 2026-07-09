@@ -21,6 +21,7 @@ class LlmSettings(BaseModel):
     model: str = "qwen3.6-35b-a3b"
     temperature: float = 0.3
     timeout: int = 30
+    api_key: str = ""
 
 
 class AuthSettings(BaseModel):

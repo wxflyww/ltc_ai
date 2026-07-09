@@ -48,6 +48,15 @@ def test_auth_invalid_key_returns_10002():
     assert r.json()["code"] == 10002
 
 
+def test_auth_skips_when_no_keys_configured():
+    fake = TranslateData(translated_text="Hi", source_lang="zh", model="m",
+                         token_usage=TokenUsage())
+    with patch("app.capabilities.translate.router.translate", return_value=fake):
+        c = _build(auth_keys=[])
+        r = c.post("/api/v1/translate", json={"text": "x", "target_lang": "en"})
+    assert r.status_code == 200
+
+
 def test_auth_bearer_header_accepted():
     fake = TranslateData(translated_text="Hi", source_lang="zh", model="m",
                          token_usage=TokenUsage())

@@ -21,10 +21,12 @@ def test_loads_default_then_env_override(tmp_path, monkeypatch):
 def test_env_var_overrides_yaml(monkeypatch):
     monkeypatch.setenv("LTC_ENV", "dev")
     monkeypatch.setenv("LTC__SERVER__PORT", "9999")
+    monkeypatch.setenv("LTC__LLM__API_KEY", "env-llm-key")
     monkeypatch.setenv("LTC__AUTH__API_KEYS", '["k1","k2"]')
     _reset_settings()
     settings = get_settings()
     assert settings.server.port == 9999
+    assert settings.llm.api_key == "env-llm-key"
     assert settings.auth.api_keys == ["k1", "k2"]
 
 
