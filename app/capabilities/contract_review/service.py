@@ -10,6 +10,7 @@ from app.capabilities.contract_review.checks import (
     check_seq2_11,
     check_seq3,
 )
+from app.capabilities.contract_review.embedded_attachments import split_embedded_attachments
 from app.capabilities.contract_review.preset_client import fetch_preset, identify_our_party
 from app.capabilities.contract_review.party import build_candidate_parties
 from app.capabilities.contract_review.prompts import build_prompt, parse_json_object
@@ -75,16 +76,18 @@ def _invoke_json_prompt(
 
 
 def _preprocess_request(request: ContractReviewRequest) -> dict:
-    attachment_dicts = [item.model_dump() for item in request.attachments]
-    full_text_and_attachments = request.contract_md
+    contract_md, embedded_attachments = split_embedded_attachments(request.contract_md)
+    uploaded_attachments = [item.model_dump() for item in request.attachments]
+    attachment_dicts = [*embedded_attachments, *uploaded_attachments]
+    full_text_and_attachments = contract_md
     if attachment_dicts:
         attachment_text = "\n\n".join(
             f"【附件】{item.get('filename')}\n{item.get('text', '')}"
             for item in attachment_dicts
         )
-        full_text_and_attachments = f"{request.contract_md}\n\n{attachment_text}"
+        full_text_and_attachments = f"{contract_md}\n\n{attachment_text}"
     return {
-        "full_text": request.contract_md,
+        "full_text": contract_md,
         "full_text_and_attachments": full_text_and_attachments,
         "attachments": attachment_dicts,
     }
