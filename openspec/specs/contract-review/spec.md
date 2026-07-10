@@ -1,4 +1,4 @@
-# contract-review Specification
+# contract-review 规格说明
 
 ## Purpose
 
@@ -192,3 +192,9 @@
 
 - WHEN 模型输出无法解析或结构不符合要求
 - THEN 系统 SHALL 返回错误码 `20003`
+
+## 依赖
+
+- 合同组织评审 SHALL 使用项目级统一响应壳。
+- 合同组织评审 SHALL 复用 `app/models/llm.py` 进行模型调用。
+- 合同组织评审 SHALL 遵循现有错误码约定，其中模型格式错误使用 `20003`。
