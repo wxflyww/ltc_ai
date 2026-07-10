@@ -53,3 +53,9 @@ Thumbs.db
 .env
 config/config-local-*.yaml
 
+# 本地 AI/OpenSpec 工具生成物
+.codex/
+.github/
+.qoder/
+extract_md.py
+
