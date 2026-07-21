@@ -49,3 +49,7 @@ class ModelTimeoutError(AppError):
 class ModelFormatError(AppError):
     code = ErrorCode.MODEL_FORMAT
     http_status = 500
+
+
+class ModelInputTooLongError(ModelFormatError):
+    http_status = 400

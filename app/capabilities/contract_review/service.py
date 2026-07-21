@@ -1,3 +1,5 @@
+import time
+from dataclasses import dataclass
 from datetime import datetime
 
 from langchain_core.messages import HumanMessage
@@ -17,14 +19,70 @@ from app.capabilities.contract_review.prompts import build_prompt, parse_json_ob
 from app.capabilities.contract_review.response_formats import get_response_format
 from app.capabilities.contract_review.schemas import (
     CheckItem,
+    CheckMetric,
     ContractReviewData,
     ContractReviewRequest,
     HeaderInfo,
     SignatureInfo,
 )
 from app.core.config import get_settings
-from app.core.errors import ModelFormatError
+from app.core.errors import ModelFormatError, ModelInputTooLongError
 from app.models.llm import get_chat_model, invoke_model
+
+
+PROMPT_METRIC_NAMES = {
+    "A-1a": "合同首页/签约方提取",
+    "A-1b": "我方签章区块提取",
+    "A-3": "金额和付款条款提取",
+    "A-4": "合同份数和附件声明提取",
+    "B-1": "称谓一致性",
+    "B-4": "附件内容一致性",
+}
+
+
+@dataclass
+class PipelineResult:
+    items: list[CheckItem | dict]
+    metrics: list[CheckMetric]
+
+    def __iter__(self):
+        return iter(self.items)
+
+    def __getitem__(self, key: str):
+        if key == "items":
+            return self.items
+        if key == "metrics":
+            return self.metrics
+        raise KeyError(key)
+
+
+def _empty_usage() -> dict:
+    return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
+
+def _add_usage(left: dict, right: dict | None) -> dict:
+    right = right or {}
+    return {
+        "prompt_tokens": int(left.get("prompt_tokens", 0)) + int(right.get("prompt_tokens", 0)),
+        "completion_tokens": int(left.get("completion_tokens", 0)) + int(right.get("completion_tokens", 0)),
+        "total_tokens": int(left.get("total_tokens", 0)) + int(right.get("total_tokens", 0)),
+    }
+
+
+def _is_context_length_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return (
+        "context length" in text
+        or "maximum input length" in text
+        or "input tokens" in text and "context" in text
+    )
+
+
+def _raise_if_context_length_error(exc: Exception, label: str) -> None:
+    if _is_context_length_error(exc):
+        raise ModelInputTooLongError(
+            f"{label}内容过长，超过模型单次处理长度限制，请拆分该部分内容或减少单次上传内容后重试"
+        ) from exc
 
 
 def _require_keys(payload: dict, keys: list[str], prompt_name: str) -> None:
@@ -38,57 +96,74 @@ def _invoke_json_prompt(
     *,
     required_keys: list[str] | None = None,
     validation_label: str | None = None,
+    metrics: list[CheckMetric] | None = None,
+    metric_id: str | None = None,
+    metric_name: str | None = None,
     **kwargs,
 ) -> dict:
     model = get_chat_model()
     messages = build_prompt(prompt_name, **kwargs)
     response_format = get_response_format(prompt_name)
+    label = validation_label or metric_id or prompt_name
+    usage = _empty_usage()
+    start = time.perf_counter()
 
     def parse_and_validate(raw_content: str) -> dict:
         payload = parse_json_object(raw_content)
         if required_keys:
-            _require_keys(payload, required_keys, validation_label or prompt_name)
+            _require_keys(payload, required_keys, label)
         return payload
 
-    content, _usage = invoke_model(model, messages, response_format=response_format)
     try:
-        return parse_and_validate(content)
-    except ModelFormatError as first_error:
-        retry_messages = [
-            *messages,
-            HumanMessage(content=(
-                "上一次输出不是符合要求的JSON。请只返回一个JSON对象，"
-                "不要解释、不要markdown代码块、不要<think>内容；"
-                "必须严格包含提示词要求的顶层字段和JSON结构。"
-            )),
-        ]
-        retry_content, _retry_usage = invoke_model(
-            model,
-            retry_messages,
-            response_format=response_format,
-        )
+        content, call_usage = invoke_model(model, messages, response_format=response_format)
+        usage = _add_usage(usage, call_usage)
         try:
-            return parse_and_validate(retry_content)
-        except ModelFormatError as second_error:
-            if required_keys and (validation_label or prompt_name) in second_error.message:
-                raise second_error from first_error
-            raise ModelFormatError(f"{prompt_name}{second_error.message}") from first_error
+            return parse_and_validate(content)
+        except ModelFormatError as first_error:
+            retry_messages = [
+                *messages,
+                HumanMessage(content=(
+                    "上一次输出不是符合要求的JSON。请只返回一个JSON对象，"
+                    "不要解释、不要markdown代码块、不要<think>内容；"
+                    "必须严格包含提示词要求的顶层字段和JSON结构。"
+                )),
+            ]
+            try:
+                retry_content, retry_usage = invoke_model(
+                    model,
+                    retry_messages,
+                    response_format=response_format,
+                )
+                usage = _add_usage(usage, retry_usage)
+            except Exception as exc:
+                _raise_if_context_length_error(exc, label)
+                raise
+            try:
+                return parse_and_validate(retry_content)
+            except ModelFormatError as second_error:
+                if required_keys and label in second_error.message:
+                    raise second_error from first_error
+                raise ModelFormatError(f"{prompt_name}{second_error.message}") from first_error
+    except Exception as exc:
+        _raise_if_context_length_error(exc, label)
+        raise
+    finally:
+        if metrics is not None:
+            final_id = metric_id or label
+            metrics.append(CheckMetric(
+                id=final_id,
+                name=metric_name or PROMPT_METRIC_NAMES.get(final_id, prompt_name),
+                duration_seconds=round(time.perf_counter() - start, 3),
+                token_usage=usage,
+            ))
 
 
 def _preprocess_request(request: ContractReviewRequest) -> dict:
     contract_md, embedded_attachments = split_embedded_attachments(request.contract_md)
     uploaded_attachments = [item.model_dump() for item in request.attachments]
     attachment_dicts = [*embedded_attachments, *uploaded_attachments]
-    full_text_and_attachments = contract_md
-    if attachment_dicts:
-        attachment_text = "\n\n".join(
-            f"【附件】{item.get('filename')}\n{item.get('text', '')}"
-            for item in attachment_dicts
-        )
-        full_text_and_attachments = f"{contract_md}\n\n{attachment_text}"
     return {
         "full_text": contract_md,
-        "full_text_and_attachments": full_text_and_attachments,
         "attachments": attachment_dicts,
     }
 
@@ -129,12 +204,33 @@ def _has_generic_b1_reason(items: list[CheckItem]) -> bool:
     return False
 
 
-def _run_b1(full_text_and_attachments: str) -> list[CheckItem]:
+def _b1_segment_id(scope_label: str) -> str:
+    return f"B-1-{scope_label}"
+
+
+def _attachment_scope_label(attachment: dict) -> str:
+    if str(attachment.get("source", "")).startswith("单独上传") and attachment.get("filename"):
+        return str(attachment["filename"])
+    return str(attachment.get("title") or attachment.get("filename") or f"附件{attachment.get('index')}")
+
+
+def _run_b1_segment(
+    scope_label: str,
+    segment_text: str,
+    parties: list[dict],
+    metrics: list[CheckMetric] | None = None,
+) -> list[CheckItem]:
+    segment_id = _b1_segment_id(scope_label)
     payload = _invoke_json_prompt(
         "b1_appellation",
         required_keys=["checks"],
-        validation_label="B-1",
-        full_text_and_attachments=full_text_and_attachments,
+        validation_label=segment_id,
+        metrics=metrics,
+        metric_id=segment_id,
+        metric_name=f"称谓一致性-{scope_label}",
+        parties=parties,
+        scope_label=scope_label,
+        segment_text=segment_text,
     )
     items = _parse_model_checks(payload, "B-1", "称谓一致性")
     if not _has_generic_b1_reason(items):
@@ -143,9 +239,14 @@ def _run_b1(full_text_and_attachments: str) -> list[CheckItem]:
     retry_payload = _invoke_json_prompt(
         "b1_appellation",
         required_keys=["checks"],
-        validation_label="B-1",
-        full_text_and_attachments=(
-            f"{full_text_and_attachments}\n\n"
+        validation_label=segment_id,
+        metrics=metrics,
+        metric_id=f"{segment_id}-补充说明",
+        metric_name=f"称谓一致性-{scope_label}-补充说明",
+        parties=parties,
+        scope_label=scope_label,
+        segment_text=(
+            f"{segment_text}\n\n"
             "【补充要求】上一次reason过于笼统。若存在称谓不一致，"
             "必须说明涉及哪一方或哪个主体、出现了哪些不同称谓、分别出现在哪些位置或上下文中；"
             "禁止只输出“称谓存在不一致”“存在称谓不一致”“称谓不统一”等泛化描述。"
@@ -154,13 +255,39 @@ def _run_b1(full_text_and_attachments: str) -> list[CheckItem]:
     return _parse_model_checks(retry_payload, "B-1", "称谓一致性")
 
 
-def _run_b4(resolved_attachments: list[dict], baseline: dict) -> list[CheckItem]:
+def _run_b1(contract_text: str, attachments: list[dict], parties: list[dict], metrics: list[CheckMetric] | None = None) -> list[CheckItem]:
+    segment_metrics: list[CheckMetric] = []
+    items: list[CheckItem] = []
+    items.extend(_run_b1_segment("合同正文", contract_text, parties, segment_metrics))
+    for attachment in attachments:
+        scope_label = _attachment_scope_label(attachment)
+        items.extend(_run_b1_segment(scope_label, attachment.get("text", ""), parties, segment_metrics))
+
+    if metrics is not None:
+        total_usage = _empty_usage()
+        for metric in segment_metrics:
+            total_usage = _add_usage(total_usage, metric.token_usage.model_dump())
+        metrics.append(CheckMetric(
+            id="B-1",
+            name="称谓一致性",
+            duration_seconds=round(sum(metric.duration_seconds for metric in segment_metrics), 3),
+            token_usage=total_usage,
+            segments=segment_metrics,
+        ))
+    return items
+
+
+def _run_b4(resolved_attachments: list[dict], baseline: dict, metrics: list[CheckMetric] | None = None) -> list[CheckItem]:
     items: list[CheckItem] = []
     for attachment in resolved_attachments:
+        scope_label = _attachment_scope_label(attachment)
         payload = _invoke_json_prompt(
             "b4_attachment_content",
             required_keys=["checks"],
-            validation_label="B-4",
+            validation_label=f"B-4-{scope_label}",
+            metrics=metrics,
+            metric_id=f"B-4-{scope_label}",
+            metric_name=f"附件内容一致性-{scope_label}",
             baseline=baseline,
             attachment_text=attachment.get("text", ""),
         )
@@ -170,13 +297,16 @@ def _run_b4(resolved_attachments: list[dict], baseline: dict) -> list[CheckItem]
     return items
 
 
-def run_review_pipeline(request: ContractReviewRequest) -> list[CheckItem | dict]:
+def run_review_pipeline(request: ContractReviewRequest) -> PipelineResult:
     prepared = _preprocess_request(request)
+    metrics: list[CheckMetric] = []
 
     a1a = _invoke_json_prompt(
         "a1a_party_extraction",
         required_keys=["header", "signature_parties", "sections"],
         validation_label="A-1a",
+        metrics=metrics,
+        metric_id="A-1a",
         full_text=prepared["full_text"],
     )
     _require_keys(a1a, ["header", "signature_parties", "sections"], "A-1a")
@@ -197,6 +327,8 @@ def run_review_pipeline(request: ContractReviewRequest) -> list[CheckItem | dict
             "a1b_our_signature",
             required_keys=["signature"],
             validation_label="A-1b",
+            metrics=metrics,
+            metric_id="A-1b",
             our_party=our_party.name,
             full_text=prepared["full_text"],
         )
@@ -221,13 +353,21 @@ def run_review_pipeline(request: ContractReviewRequest) -> list[CheckItem | dict
     items.append(check_seq3(header, signature, our_party))
     items.extend(seq11_items)
 
-    a3 = _invoke_json_prompt("a3_amount_payment", full_text=prepared["full_text"])
+    a3 = _invoke_json_prompt(
+        "a3_amount_payment",
+        validation_label="A-3",
+        metrics=metrics,
+        metric_id="A-3",
+        full_text=prepared["full_text"],
+    )
     items.extend(check_amount_payment(a3))
 
     a4 = _invoke_json_prompt(
         "a4_copies_attachments",
         required_keys=["copies", "attachments_declared"],
         validation_label="A-4",
+        metrics=metrics,
+        metric_id="A-4",
         full_text=prepared["full_text"],
     )
     _require_keys(a4, ["copies", "attachments_declared"], "A-4")
@@ -239,17 +379,27 @@ def run_review_pipeline(request: ContractReviewRequest) -> list[CheckItem | dict
     )
     items.extend(attachment_result["check_results"])
 
-    items.extend(_run_b1(prepared["full_text_and_attachments"]))
+    b1_parties = [party.model_dump() for party in header.parties]
+    items.extend(_run_b1(prepared["full_text"], attachment_result["resolved_attachments"], b1_parties, metrics))
     items.extend(_run_b4(attachment_result["resolved_attachments"], {
         "header": header.model_dump(),
         "signature": signature.model_dump(),
         "preset": preset.model_dump() if preset is not None else None,
-    }))
-    return items
+    }, metrics))
+    return PipelineResult(items=items, metrics=metrics)
 
 
 def review_contract(request: ContractReviewRequest, check_time: str | None = None) -> ContractReviewData:
     timestamp = check_time or datetime.now().isoformat(timespec="seconds")
-    raw_items = run_review_pipeline(request)
+    pipeline_result = run_review_pipeline(request)
+    if isinstance(pipeline_result, PipelineResult):
+        raw_items = pipeline_result.items
+        metrics = pipeline_result.metrics
+    elif isinstance(pipeline_result, dict):
+        raw_items = pipeline_result.get("items", [])
+        metrics = [metric if isinstance(metric, CheckMetric) else CheckMetric(**metric) for metric in pipeline_result.get("metrics", [])]
+    else:
+        raw_items = pipeline_result
+        metrics = []
     items = [item if isinstance(item, CheckItem) else CheckItem(**item) for item in raw_items]
-    return build_review_data(timestamp, items)
+    return build_review_data(timestamp, items, metrics=metrics)

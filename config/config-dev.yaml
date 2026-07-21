@@ -1,8 +1,18 @@
 llm:
-  base_url: "http://192.168.16.10:8080/v1"
-  model: "Qwen3.6-35B"
+  base_url: "https://models.inference.ai.azure.com"
+  model: "gpt-4o-mini"
   timeout: 300
+# ======== GitHub Models 配置 ========
+
+#llm:
+# base_url: "http://192.168.16.10:8080/v1"
+# model: "Qwen3.6-35B"
+# timeout: 300  
+#  ======== 本地 vLLM 配置 ========
+
+
   # api_key 通过 .env 文件或环境变量 LTC__LLM__API_KEY 配置
+  # 示例：$env:LTC__LLM__API_KEY="ghp_你的token"
 
 signing_preset:
   base_url: "http://127.0.0.1:9800"

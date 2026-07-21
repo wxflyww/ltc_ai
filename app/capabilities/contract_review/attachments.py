@@ -117,6 +117,17 @@ def check_copies_and_attachments(
 
     for uploaded in attachments:
         filename = uploaded.get("filename", "")
+        if uploaded.get("source") == "合同正文内嵌":
+            resolved_attachments.append({
+                "index": uploaded.get("index"),
+                "filename": filename,
+                "title": uploaded.get("title") or filename,
+                "source": "合同正文内嵌",
+                "text": uploaded.get("text", ""),
+                "match_confidence": "high",
+            })
+            continue
+
         best_declared = None
         best_score = 0.0
         for declared_item in declared:
@@ -134,6 +145,7 @@ def check_copies_and_attachments(
                 warn.append(f"上传附件《{filename}》未能与合同声明附件标题高置信度匹配")
         resolved_attachments.append({
             "index": uploaded.get("index"),
+            "filename": filename,
             "title": title,
             "source": source,
             "text": uploaded.get("text", ""),

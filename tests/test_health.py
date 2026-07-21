@@ -1,5 +1,7 @@
+import pytest
 from fastapi.testclient import TestClient
 
+from app.core.config import _reset_settings
 from app.main import create_app
 
 
@@ -25,3 +27,11 @@ def test_metrics_exposed():
     assert r.status_code == 200
     # prometheus 文本格式，包含 http 指标或 python_info
     assert "http_requests_total" in r.text or "python_info" in r.text
+
+
+def test_prod_requires_auth_keys(monkeypatch):
+    monkeypatch.setenv("LTC_ENV", "prod")
+    monkeypatch.setenv("LTC__AUTH__API_KEYS", "[]")
+    _reset_settings()
+    with pytest.raises(RuntimeError, match="LTC__AUTH__API_KEYS"):
+        create_app()

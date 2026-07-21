@@ -24,6 +24,28 @@ def test_review_contract_preserves_fail_and_warn_from_checks():
     assert len(data.checks) == 2
 
 
+def test_review_contract_exposes_pipeline_metrics():
+    request = ContractReviewRequest(contract_md="# 合同", attachments=[])
+    with patch("app.capabilities.contract_review.service.run_review_pipeline") as fake_pipeline:
+        fake_pipeline.return_value = {
+            "items": [
+                {"id": "序号1", "name": "合同首页完整性", "result": "PASS", "block_level": "通过"},
+            ],
+            "metrics": [
+                {
+                    "id": "A-1a",
+                    "name": "合同首页/签约方提取",
+                    "duration_seconds": 0.12,
+                    "token_usage": {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
+                }
+            ],
+        }
+        data = review_contract(request, check_time="2026-07-07T10:00:00")
+
+    assert data.metrics[0].id == "A-1a"
+    assert data.metrics[0].token_usage.total_tokens == 12
+
+
 def test_review_contract_does_not_call_real_llm_in_unit_test():
     request = ContractReviewRequest(contract_md="# 合同", attachments=[])
     with patch("app.capabilities.contract_review.service.invoke_model") as fake_invoke:
@@ -64,8 +86,7 @@ def test_preprocess_request_splits_embedded_attachments_and_merges_uploaded():
     assert [item["filename"] for item in prepared["attachments"]] == ["附件一.md", "上传附件.md"]
     assert prepared["attachments"][0]["text"] == "附件一\n内嵌附件内容"
     assert prepared["attachments"][0]["source"] == "合同正文内嵌"
-    assert "【附件】附件一.md" in prepared["full_text_and_attachments"]
-    assert "【附件】上传附件.md" in prepared["full_text_and_attachments"]
+    assert "full_text_and_attachments" not in prepared
 
 
 def test_run_review_pipeline_uses_llm_adapter_and_preset_fetch():
@@ -81,6 +102,8 @@ def test_run_review_pipeline_uses_llm_adapter_and_preset_fetch():
         '{"signature":{"role":"乙方","name":"我方公司","legal_rep_name":"张三","signing_date":"2026年7月8日","bank_name":"招商银行","bank_account":"123456","account_holder":"我方公司","address":"地址","phone":"024-12345678","fax":"","website":"","postal_code":"110000"}}',
         '{"currency":"人民币","payment_method":"电汇","total_amount_numeric":"100","total_amount_uppercase":"壹佰元整","total_amount_match":true,"payment_stages":[]}',
         '{"copies":{"total_copies":2,"party_copies":[{"role":"甲方","copies":1},{"role":"乙方","copies":1}]},"attachments_declared":[{"index":1,"title":"附件一","content_embedded_in_contract":false},{"index":2,"title":"附件二","content_embedded_in_contract":false},{"index":3,"title":"附件三","content_embedded_in_contract":false}],"total_declared":3}',
+        '{"checks":[]}',
+        '{"checks":[]}',
         '{"checks":[]}',
         '{"checks":[]}',
         '{"checks":[]}',
@@ -151,6 +174,9 @@ def test_run_review_pipeline_sends_embedded_and_uploaded_attachments_to_b4():
         '{"checks":[]}',
         '{"checks":[]}',
         '{"checks":[]}',
+        '{"checks":[]}',
+        '{"checks":[]}',
+        '{"checks":[]}',
     ]
     b4_texts = []
 
@@ -184,6 +210,63 @@ def test_run_review_pipeline_sends_embedded_and_uploaded_attachments_to_b4():
     assert any("上传附件二" in text for text in b4_texts)
     assert any("上传附件三" in text for text in b4_texts)
     assert all(item.result != "FAIL" for item in items if item.id == "附件检查-数量标题")
+
+
+def test_run_review_pipeline_runs_b1_by_contract_and_each_attachment():
+    request = ContractReviewRequest(
+        contract_md="# 合同\n甲方：客户公司\n乙方：我方公司\n\n附件一\n内嵌附件内容",
+        attachments=[AttachmentInput(index=2, filename="上传附件.md", text="上传附件内容")],
+    )
+    outputs = [
+        '{"header":{"contract_name":"测试合同","project_name":null,"project_number":null,"contract_number":"HT-1","signing_location":"沈阳","signing_date":"2026年7月8日","parties":[{"role":"甲方","name":"客户公司"},{"role":"乙方","name":"我方公司"}]},"signature_parties":[{"role":"甲方","name":"客户公司"},{"role":"乙方","name":"我方公司"}],"sections":[]}',
+        '{"signature":{"role":"乙方","name":"我方公司","legal_rep_name":"张三","signing_date":"2026年7月8日","bank_name":"招商银行","bank_account":"123456","account_holder":"我方公司","address":"地址","phone":"024-12345678","fax":"","website":"","postal_code":"110000"}}',
+        '{"currency":"人民币","payment_method":"电汇","total_amount_numeric":"100","total_amount_uppercase":"壹佰元整","total_amount_match":true,"payment_stages":[]}',
+        '{"copies":{"total_copies":2,"party_copies":[{"role":"甲方","copies":1},{"role":"乙方","copies":1}]},"attachments_declared":[{"index":1,"title":"附件一","content_embedded_in_contract":false},{"index":2,"title":"上传附件","content_embedded_in_contract":false}],"total_declared":2}',
+        '{"checks":[]}',
+        '{"checks":[]}',
+        '{"checks":[]}',
+        '{"checks":[]}',
+        '{"checks":[]}',
+    ]
+    b1_prompts = []
+
+    def fake_invoke(model, messages, response_format=None):
+        content = messages[-1].content
+        if "【当前检查范围】" in content:
+            b1_prompts.append(content)
+        return outputs.pop(0), {
+            "prompt_tokens": 10,
+            "completion_tokens": 1,
+            "total_tokens": 11,
+        }
+
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
+            with patch("app.capabilities.contract_review.service.fetch_preset") as fake_fetch:
+                fake_fetch.return_value = SystemPreset(
+                    entity_name="我方公司",
+                    legal_rep_name="张三",
+                    legal_rep_id_number="",
+                    authorized_reps=[],
+                    bank_name="招商银行",
+                    bank_account="123456",
+                    account_holder="我方公司",
+                    address="地址",
+                    phone="024-12345678",
+                    fax="",
+                    website="",
+                    postal_code="110000",
+                )
+                result = run_review_pipeline(request)
+
+    assert len(b1_prompts) == 3
+    assert "合同正文" in b1_prompts[0]
+    assert "内嵌附件内容" not in b1_prompts[0]
+    assert "附件一" in b1_prompts[1]
+    assert "上传附件.md" in b1_prompts[2]
+    b1_metric = next(metric for metric in result["metrics"] if metric.id == "B-1")
+    assert [segment.id for segment in b1_metric.segments] == ["B-1-合同正文", "B-1-附件一", "B-1-上传附件.md"]
+    assert b1_metric.token_usage.total_tokens == 33
 
 
 def test_invoke_json_prompt_retries_once_when_model_returns_non_json():
@@ -281,6 +364,28 @@ def test_invoke_json_prompt_error_message_includes_prompt_name_after_retry_fails
     assert "a1a_party_extraction模型输出不是合法JSON" in str(exc.value)
 
 
+def test_invoke_json_prompt_converts_context_length_error_with_label():
+    def fake_invoke(model, messages, response_format=None):
+        raise Exception(
+            "Error code: 400 - You passed 16385 input tokens. "
+            "However, the model's context length is only 16384 tokens."
+        )
+
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
+            with pytest.raises(ModelFormatError) as exc:
+                _invoke_json_prompt(
+                    "b1_appellation",
+                    validation_label="B-1-附件一",
+                    parties=[],
+                    scope_label="附件一",
+                    segment_text="很长的附件",
+                )
+
+    assert "B-1-附件一内容过长" in str(exc.value)
+    assert "超过模型单次处理长度限制" in str(exc.value)
+
+
 def test_run_b1_retries_when_reason_is_too_generic():
     outputs = [
         '{"checks":[{"result":"WARN","block_level":"提示","reason":"称谓存在不一致"}]}',
@@ -292,7 +397,7 @@ def test_run_b1_retries_when_reason_is_too_generic():
 
     with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke) as mocked:
-            items = _run_b1("合同正文")
+            items = _run_b1("合同正文", [], [], [])
 
     assert mocked.call_count == 2
     assert items[0].result == "WARN"

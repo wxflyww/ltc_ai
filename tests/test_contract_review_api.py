@@ -3,6 +3,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from app.capabilities.contract_review.schemas import CheckItem, ContractReviewData
+from app.core.errors import ModelInputTooLongError
 from app.main import create_app
 
 
@@ -34,6 +35,19 @@ def test_contract_review_validation_error_returns_10001():
     response = _client().post("/api/v1/contract-review", json={"attachments": []})
     assert response.status_code == 422
     assert response.json()["code"] == 10001
+
+
+def test_contract_review_context_length_error_returns_clear_20003():
+    with patch(
+        "app.capabilities.contract_review.router.review_contract",
+        side_effect=ModelInputTooLongError("B-1-附件一内容过长，超过模型单次处理长度限制，请拆分该部分内容或减少单次上传内容后重试"),
+    ):
+        response = _client().post("/api/v1/contract-review", json={"contract_md": "# 合同", "attachments": []})
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["code"] == 20003
+    assert "B-1-附件一内容过长" in body["message"]
 
 
 def test_contract_review_upload_md_builds_existing_request_contract():

@@ -107,8 +107,12 @@ b1_appellation:
         {{"result": "WARN", "block_level": "提示", "reason": "乙方称谓不一致：合同首部为“供应商（乙方）”，正文第3条使用“卖方”，附件一使用“承包人”，请业务确认是否均指同一主体。"}}
       ]
     }}
-    【合同全文及附件文本】
-    {full_text_and_attachments}
+    【签约方基准】
+    {parties}
+    【当前检查范围】
+    {scope_label}
+    【当前文本】
+    {segment_text}
 
 b4_attachment_content:
   system: |

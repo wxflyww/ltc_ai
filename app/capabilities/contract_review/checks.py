@@ -7,7 +7,7 @@ from app.capabilities.contract_review.schemas import (
     SignatureInfo,
     SystemPreset,
 )
-from app.capabilities.contract_review.schemas import CheckItem, ContractReviewData
+from app.capabilities.contract_review.schemas import CheckItem, CheckMetric, ContractReviewData
 from app.capabilities.contract_review.utils import is_empty, mask_id_number, normalize_date, to_halfwidth
 
 
@@ -61,7 +61,7 @@ def build_check_items(
     return items
 
 
-def build_review_data(check_time: str, *check_lists) -> ContractReviewData:
+def build_review_data(check_time: str, *check_lists, metrics: list[CheckMetric] | None = None) -> ContractReviewData:
     checks: list[CheckItem] = []
     for item in check_lists:
         if isinstance(item, list):
@@ -73,7 +73,7 @@ def build_review_data(check_time: str, *check_lists) -> ContractReviewData:
         if any(item.result == "FAIL" and item.block_level == "硬阻断" for item in checks)
         else "PASS"
     )
-    return ContractReviewData(overall_result=overall, check_time=check_time, checks=checks)
+    return ContractReviewData(overall_result=overall, check_time=check_time, checks=checks, metrics=metrics or [])
 
 
 def check_seq1(

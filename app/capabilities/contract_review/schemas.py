@@ -28,10 +28,25 @@ class CheckItem(BaseModel):
     reason: str | None = None
 
 
+class TokenUsage(BaseModel):
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+
+
+class CheckMetric(BaseModel):
+    id: str
+    name: str
+    duration_seconds: float = 0.0
+    token_usage: TokenUsage = Field(default_factory=TokenUsage)
+    segments: list["CheckMetric"] = Field(default_factory=list)
+
+
 class ContractReviewData(BaseModel):
     overall_result: OverallResult
     check_time: str
     checks: list[CheckItem]
+    metrics: list[CheckMetric] = Field(default_factory=list)
 
 
 class ContractParty(BaseModel):
