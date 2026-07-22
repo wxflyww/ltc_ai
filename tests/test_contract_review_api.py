@@ -37,17 +37,21 @@ def test_contract_review_validation_error_returns_10001():
     assert response.json()["code"] == 10001
 
 
-def test_contract_review_context_length_error_returns_clear_20003():
+def test_contract_review_context_length_error_returns_blocking_check_item():
     with patch(
-        "app.capabilities.contract_review.router.review_contract",
+        "app.capabilities.contract_review.service.run_review_pipeline",
         side_effect=ModelInputTooLongError("B-1-附件一内容过长，超过模型单次处理长度限制，请拆分该部分内容或减少单次上传内容后重试"),
     ):
         response = _client().post("/api/v1/contract-review", json={"contract_md": "# 合同", "attachments": []})
 
-    assert response.status_code == 400
+    assert response.status_code == 200
     body = response.json()
-    assert body["code"] == 20003
-    assert "B-1-附件一内容过长" in body["message"]
+    assert body["code"] == 0
+    assert body["data"]["overall_result"] == "BLOCK"
+    assert len(body["data"]["checks"]) == 1
+    assert body["data"]["checks"][0]["id"] == "模型上下文长度"
+    assert body["data"]["checks"][0]["block_level"] == "硬阻断"
+    assert "B-1-附件一内容过长" in body["data"]["checks"][0]["reason"]
 
 
 def test_contract_review_upload_md_builds_existing_request_contract():

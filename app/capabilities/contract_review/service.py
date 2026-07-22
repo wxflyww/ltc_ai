@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from langchain_core.messages import HumanMessage
+from pydantic import ValidationError
 
 from app.capabilities.contract_review.attachments import check_copies_and_attachments
 from app.capabilities.contract_review.checks import (
@@ -26,7 +27,9 @@ from app.capabilities.contract_review.schemas import (
     SignatureInfo,
 )
 from app.core.config import get_settings
-from app.core.errors import ModelFormatError, ModelInputTooLongError
+from app.core.errors import ModelFormatError, ModelInputTooLongError, ModelOutputTooLongError
+from app.core.llm_trace_audit import add_event as add_trace_event
+from app.core.logging import get_logger
 from app.models.llm import get_chat_model, invoke_model
 
 
@@ -38,6 +41,8 @@ PROMPT_METRIC_NAMES = {
     "B-1": "称谓一致性",
     "B-4": "附件内容一致性",
 }
+
+logger = get_logger("contract_review")
 
 
 @dataclass
@@ -60,6 +65,79 @@ def _empty_usage() -> dict:
     return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
 
+def _shorten_text(text: str, max_chars: int) -> str:
+    if max_chars <= 0 or len(text) <= max_chars:
+        return text
+    return f"{text[:max_chars]}...(truncated, total={len(text)} chars)"
+
+
+def _trace_prompt_enabled(prompt_name: str | None) -> bool:
+    filters = [str(item).strip() for item in get_settings().debug.llm_trace_prompts if str(item).strip()]
+    if not filters:
+        return True
+    if not prompt_name:
+        return False
+    return prompt_name in filters
+
+
+def _truncate_trace_value(value, max_chars: int):
+    if isinstance(value, str):
+        return _shorten_text(value, max_chars)
+    if isinstance(value, dict):
+        return {k: _truncate_trace_value(v, max_chars) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_truncate_trace_value(item, max_chars) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_truncate_trace_value(item, max_chars) for item in value)
+    return value
+
+
+def _log_llm_trace(event: str, **extra) -> None:
+    settings = get_settings()
+    if not settings.debug.llm_trace:
+        return
+
+    prompt_name = str(extra.get("prompt_name", "")).strip() or None
+    if not _trace_prompt_enabled(prompt_name):
+        return
+
+    max_chars = max(0, int(settings.debug.llm_trace_max_chars))
+    payload: dict = {"event": event}
+    for key, value in extra.items():
+        payload[key] = _truncate_trace_value(value, max_chars)
+    logger.info("contract review llm trace", extra={"payload": payload})
+    add_trace_event(payload)
+
+
+RESULT_TO_BLOCK_LEVEL = {
+    "PASS": "通过",
+    "WARN": "提示",
+    "FAIL": "硬阻断",
+    "NA": "不适用",
+}
+
+
+RESULT_ALIASES = {
+    "通过": "PASS",
+    "提示": "WARN",
+    "硬阻断": "FAIL",
+    "不适用": "NA",
+}
+
+
+BLOCK_LEVEL_ALIASES = {
+    "pass": "通过",
+    "warn": "提示",
+    "warning": "提示",
+    "fail": "硬阻断",
+    "block": "硬阻断",
+    "na": "不适用",
+    "n/a": "不适用",
+    "none": "",
+    "null": "",
+}
+
+
 def _add_usage(left: dict, right: dict | None) -> dict:
     right = right or {}
     return {
@@ -69,19 +147,60 @@ def _add_usage(left: dict, right: dict | None) -> dict:
     }
 
 
-def _is_context_length_error(exc: Exception) -> bool:
+def _normalize_result(raw_result) -> str:
+    text = str(raw_result or "").strip()
+    upper = text.upper()
+    if upper in RESULT_TO_BLOCK_LEVEL:
+        return upper
+    return RESULT_ALIASES.get(text, upper)
+
+
+def _normalize_block_level(raw_level, result: str) -> str:
+    text = str(raw_level or "").strip()
+    if text in {"通过", "提示", "硬阻断", "不适用"}:
+        return text
+
+    normalized = BLOCK_LEVEL_ALIASES.get(text.lower(), text)
+    if normalized in {"通过", "提示", "硬阻断", "不适用"}:
+        return normalized
+
+    # 模型偶发返回“无/空”，按 result 推断 block_level，避免把可恢复问题放大成 500。
+    return RESULT_TO_BLOCK_LEVEL.get(result, "不适用")
+
+
+def _detect_length_issue(exc: Exception) -> str | None:
     text = str(exc).lower()
-    return (
-        "context length" in text
+    output_like = (
+        "lengthfinishreasonerror" in text
+        or "length limit was reached" in text
+        or "finish reason" in text and "length" in text
+    )
+    input_like = (
+        "tokens_limit_reached" in text
+        or "context length" in text
+        or "maximum context length" in text
+        or "context window" in text
         or "maximum input length" in text
         or "input tokens" in text and "context" in text
     )
+    if output_like and not input_like:
+        return "output"
+    if input_like:
+        return "input"
+    if output_like:
+        return "output"
+    return None
 
 
-def _raise_if_context_length_error(exc: Exception, label: str) -> None:
-    if _is_context_length_error(exc):
+def _raise_if_length_issue(exc: Exception, label: str) -> None:
+    issue = _detect_length_issue(exc)
+    if issue == "input":
         raise ModelInputTooLongError(
             f"{label}内容过长，超过模型单次处理长度限制，请拆分该部分内容或减少单次上传内容后重试"
+        ) from exc
+    if issue == "output":
+        raise ModelOutputTooLongError(
+            f"{label}模型输出达到长度上限，结果被截断，请缩小检查范围或拆分内容后重试"
         ) from exc
 
 
@@ -105,6 +224,14 @@ def _invoke_json_prompt(
     messages = build_prompt(prompt_name, **kwargs)
     response_format = get_response_format(prompt_name)
     label = validation_label or metric_id or prompt_name
+    _log_llm_trace(
+        "invoke_json_prompt_request",
+        prompt_name=prompt_name,
+        label=label,
+        message_count=len(messages),
+        last_message=(messages[-1].content if messages else ""),
+        response_format_name=((response_format or {}).get("json_schema") or {}).get("name", ""),
+    )
     usage = _empty_usage()
     start = time.perf_counter()
 
@@ -116,10 +243,36 @@ def _invoke_json_prompt(
 
     try:
         content, call_usage = invoke_model(model, messages, response_format=response_format)
+    except Exception as exc:
+        _log_llm_trace(
+            "invoke_json_prompt_invoke_error",
+            prompt_name=prompt_name,
+            label=label,
+            error_type=exc.__class__.__name__,
+            error=str(exc),
+            length_issue=_detect_length_issue(exc),
+        )
+        _raise_if_length_issue(exc, label)
+        raise
+
+    try:
+        _log_llm_trace(
+            "invoke_json_prompt_response",
+            prompt_name=prompt_name,
+            label=label,
+            content=content,
+            usage=call_usage,
+        )
         usage = _add_usage(usage, call_usage)
         try:
             return parse_and_validate(content)
         except ModelFormatError as first_error:
+            _log_llm_trace(
+                "invoke_json_prompt_first_parse_error",
+                prompt_name=prompt_name,
+                label=label,
+                error=str(first_error),
+            )
             retry_messages = [
                 *messages,
                 HumanMessage(content=(
@@ -134,9 +287,24 @@ def _invoke_json_prompt(
                     retry_messages,
                     response_format=response_format,
                 )
+                _log_llm_trace(
+                    "invoke_json_prompt_retry_response",
+                    prompt_name=prompt_name,
+                    label=label,
+                    content=retry_content,
+                    usage=retry_usage,
+                )
                 usage = _add_usage(usage, retry_usage)
             except Exception as exc:
-                _raise_if_context_length_error(exc, label)
+                _log_llm_trace(
+                    "invoke_json_prompt_retry_invoke_error",
+                    prompt_name=prompt_name,
+                    label=label,
+                    error_type=exc.__class__.__name__,
+                    error=str(exc),
+                    length_issue=_detect_length_issue(exc),
+                )
+                _raise_if_length_issue(exc, label)
                 raise
             try:
                 return parse_and_validate(retry_content)
@@ -144,9 +312,6 @@ def _invoke_json_prompt(
                 if required_keys and label in second_error.message:
                     raise second_error from first_error
                 raise ModelFormatError(f"{prompt_name}{second_error.message}") from first_error
-    except Exception as exc:
-        _raise_if_context_length_error(exc, label)
-        raise
     finally:
         if metrics is not None:
             final_id = metric_id or label
@@ -168,7 +333,7 @@ def _preprocess_request(request: ContractReviewRequest) -> dict:
     }
 
 
-def _parse_model_checks(payload: dict, item_id: str, item_name: str) -> list[CheckItem]:
+def _parse_model_checks(payload: dict, item_id: str, item_name: str, prompt_name: str | None = None) -> list[CheckItem]:
     raw_checks = payload.get("checks", [])
     if not isinstance(raw_checks, list):
         raise ModelFormatError(f"{item_id}模型输出checks不是数组")
@@ -176,9 +341,26 @@ def _parse_model_checks(payload: dict, item_id: str, item_name: str) -> list[Che
     for raw in raw_checks:
         if not isinstance(raw, dict):
             raise ModelFormatError(f"{item_id}模型输出checks元素不是对象")
-        raw.setdefault("id", item_id)
-        raw.setdefault("name", item_name)
-        items.append(CheckItem.model_validate(raw))
+        normalized = dict(raw)
+        normalized.setdefault("id", item_id)
+        normalized.setdefault("name", item_name)
+        normalized["result"] = _normalize_result(normalized.get("result"))
+        normalized["block_level"] = _normalize_block_level(
+            normalized.get("block_level"),
+            normalized["result"],
+        )
+        _log_llm_trace(
+            "parse_model_checks_item",
+            prompt_name=prompt_name,
+            item_id=item_id,
+            item_name=item_name,
+            raw=raw,
+            normalized=normalized,
+        )
+        try:
+            items.append(CheckItem.model_validate(normalized))
+        except ValidationError as exc:
+            raise ModelFormatError(f"{item_id}模型输出checks字段不合法：{exc}") from exc
     if not items:
         items.append(CheckItem(id=item_id, name=item_name, result="PASS", block_level="通过", reason=None))
     return items
@@ -202,6 +384,75 @@ def _has_generic_b1_reason(items: list[CheckItem]) -> bool:
         if reason in GENERIC_B1_REASONS:
             return True
     return False
+
+
+_B1_NON_APPELLATION_HINTS = (
+    "本合同",
+    "本协议",
+    "措辞",
+    "行文",
+    "建议统一",
+)
+
+
+def _ensure_b1_scope_prefix(reason: str | None, scope_label: str) -> str:
+    text = (reason or "").strip()
+    if not text:
+        return f"【范围】{scope_label}"
+    if text.startswith("【范围】"):
+        return text
+    return f"【范围】{scope_label} {text}"
+
+
+def _is_b1_noise(item: CheckItem) -> bool:
+    if item.result not in {"WARN", "FAIL"}:
+        return False
+    text = (item.reason or "")
+    if "称谓" not in text:
+        return True
+    return any(token in text for token in _B1_NON_APPELLATION_HINTS)
+
+
+def _b1_reason_fingerprint(reason: str | None) -> str:
+    text = (reason or "").strip().lower()
+    for ch in ("，", "。", "；", ";", "：", ":", "（", "）", "(", ")", " ", "\n", "\t"):
+        text = text.replace(ch, "")
+    return text
+
+
+def _finalize_b1_items(items: list[CheckItem], scope_label: str) -> list[CheckItem]:
+    finalized: list[CheckItem] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for item in items:
+        reason = _ensure_b1_scope_prefix(item.reason, scope_label)
+        normalized_item = CheckItem(
+            id=item.id,
+            name=f"称谓一致性-{scope_label}",
+            result=item.result,
+            block_level=item.block_level,
+            reason=reason,
+        )
+        if _is_b1_noise(normalized_item):
+            continue
+        fp = (
+            normalized_item.id,
+            normalized_item.name,
+            normalized_item.result,
+            _b1_reason_fingerprint(normalized_item.reason),
+        )
+        if fp in seen:
+            continue
+        seen.add(fp)
+        finalized.append(normalized_item)
+    if not finalized:
+        return [CheckItem(
+            id="B-1",
+            name=f"称谓一致性-{scope_label}",
+            result="PASS",
+            block_level="通过",
+            reason=None,
+        )]
+    return finalized
 
 
 def _b1_segment_id(scope_label: str) -> str:
@@ -232,9 +483,9 @@ def _run_b1_segment(
         scope_label=scope_label,
         segment_text=segment_text,
     )
-    items = _parse_model_checks(payload, "B-1", "称谓一致性")
+    items = _parse_model_checks(payload, "B-1", "称谓一致性", prompt_name="b1_appellation")
     if not _has_generic_b1_reason(items):
-        return items
+        return _finalize_b1_items(items, scope_label)
 
     retry_payload = _invoke_json_prompt(
         "b1_appellation",
@@ -252,7 +503,8 @@ def _run_b1_segment(
             "禁止只输出“称谓存在不一致”“存在称谓不一致”“称谓不统一”等泛化描述。"
         ),
     )
-    return _parse_model_checks(retry_payload, "B-1", "称谓一致性")
+    retry_items = _parse_model_checks(retry_payload, "B-1", "称谓一致性", prompt_name="b1_appellation")
+    return _finalize_b1_items(retry_items, scope_label)
 
 
 def _run_b1(contract_text: str, attachments: list[dict], parties: list[dict], metrics: list[CheckMetric] | None = None) -> list[CheckItem]:
@@ -291,7 +543,12 @@ def _run_b4(resolved_attachments: list[dict], baseline: dict, metrics: list[Chec
             baseline=baseline,
             attachment_text=attachment.get("text", ""),
         )
-        items.extend(_parse_model_checks(payload, "B-4", f"附件内容一致性-{attachment.get('title') or attachment.get('index')}"))
+        items.extend(_parse_model_checks(
+            payload,
+            "B-4",
+            f"附件内容一致性-{attachment.get('title') or attachment.get('index')}",
+            prompt_name="b4_attachment_content",
+        ))
     if not resolved_attachments:
         items.append(CheckItem(id="B-4", name="附件内容一致性", result="NA", block_level="不适用", reason="无可检查附件"))
     return items
@@ -391,7 +648,32 @@ def run_review_pipeline(request: ContractReviewRequest) -> PipelineResult:
 
 def review_contract(request: ContractReviewRequest, check_time: str | None = None) -> ContractReviewData:
     timestamp = check_time or datetime.now().isoformat(timespec="seconds")
-    pipeline_result = run_review_pipeline(request)
+    try:
+        pipeline_result = run_review_pipeline(request)
+    except ModelInputTooLongError as exc:
+        return build_review_data(
+            timestamp,
+            CheckItem(
+                id="模型上下文长度",
+                name="模型上下文长度",
+                result="FAIL",
+                block_level="硬阻断",
+                reason=exc.message,
+            ),
+            metrics=[],
+        )
+    except ModelOutputTooLongError as exc:
+        return build_review_data(
+            timestamp,
+            CheckItem(
+                id="模型输出长度",
+                name="模型输出长度",
+                result="FAIL",
+                block_level="硬阻断",
+                reason=exc.message,
+            ),
+            metrics=[],
+        )
     if isinstance(pipeline_result, PipelineResult):
         raw_items = pipeline_result.items
         metrics = pipeline_result.metrics

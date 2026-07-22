@@ -30,6 +30,22 @@ def test_env_var_overrides_yaml(monkeypatch):
     assert settings.auth.api_keys == ["k1", "k2"]
 
 
+def test_debug_settings_from_env(monkeypatch):
+    monkeypatch.setenv("LTC_ENV", "dev")
+    monkeypatch.setenv("LTC__DEBUG__LLM_TRACE", "true")
+    monkeypatch.setenv("LTC__DEBUG__LLM_TRACE_MAX_CHARS", "1234")
+    monkeypatch.setenv("LTC__DEBUG__LLM_TRACE_PROMPTS", '["b4_attachment_content"]')
+    monkeypatch.setenv("LTC__DEBUG__LLM_TRACE_WRITE_HTML", "false")
+    monkeypatch.setenv("LTC__DEBUG__LLM_TRACE_OUTPUT_DIR", "tmp/custom-audit")
+    _reset_settings()
+    settings = get_settings()
+    assert settings.debug.llm_trace is True
+    assert settings.debug.llm_trace_max_chars == 1234
+    assert settings.debug.llm_trace_prompts == ["b4_attachment_content"]
+    assert settings.debug.llm_trace_write_html is False
+    assert settings.debug.llm_trace_output_dir == "tmp/custom-audit"
+
+
 def test_prod_env_uses_prod_yaml(monkeypatch):
     monkeypatch.setenv("LTC_ENV", "prod")
     _reset_settings()

@@ -8,6 +8,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from app.core.errors import ErrorCode
+from app.core.llm_trace_audit import finish_request as finish_llm_trace_request
+from app.core.llm_trace_audit import start_request as start_llm_trace_request
 from app.core.logging import bind_trace_id, clear_trace_id, get_logger
 from app.core.response import ApiResponse
 
@@ -25,13 +27,30 @@ class TraceIdMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         trace_id = request.headers.get("X-Trace-Id") or uuid.uuid4().hex
         bind_trace_id(trace_id)
+        start_llm_trace_request(trace_id, request.url.path)
         start = time.perf_counter()
+        response: Response | None = None
+        caught_exc: Exception | None = None
         try:
             response = await call_next(request)
+        except Exception as exc:  # noqa: BLE001
+            caught_exc = exc
         finally:
             clear_trace_id()
         duration = time.perf_counter() - start
+
+        if response is None:
+            audit_file = finish_llm_trace_request(status_code=500, duration_seconds=duration)
+            if audit_file:
+                logger.info("llm trace audit saved", extra={"endpoint": request.url.path, "payload": {"audit_file": audit_file}})
+            if caught_exc is not None:
+                raise caught_exc
+            raise RuntimeError("request finished without response")
+
         response = await _inject_trace_fields(response, trace_id, duration)
+        audit_file = finish_llm_trace_request(status_code=response.status_code, duration_seconds=duration)
+        if audit_file:
+            logger.info("llm trace audit saved", extra={"endpoint": request.url.path, "payload": {"audit_file": audit_file}})
         logger.info("request done", extra={
             "endpoint": request.url.path,
             "duration_seconds": round(duration, 3),

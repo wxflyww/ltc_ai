@@ -2,9 +2,12 @@ from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pathlib import Path
 
 from app.capabilities.translate.schemas import TranslateData, TokenUsage
+from app.core.config import _reset_settings
 from app.core.errors import ModelInvocationError
+from app.core.llm_trace_audit import add_event
 from app.core.middleware import TraceIdMiddleware, AuthMiddleware, register_exception_handlers
 from app.capabilities.translate.router import router as translate_router
 
@@ -110,3 +113,34 @@ def test_unhandled_exception_returns_29999():
     r = c.get("/crash")
     assert r.status_code == 500
     assert r.json()["code"] == 29999
+
+
+def test_trace_middleware_writes_llm_audit_html(tmp_path, monkeypatch):
+    monkeypatch.setenv("LTC_ENV", "dev")
+    monkeypatch.setenv("LTC__DEBUG__LLM_TRACE", "true")
+    monkeypatch.setenv("LTC__DEBUG__LLM_TRACE_WRITE_HTML", "true")
+    monkeypatch.setenv("LTC__DEBUG__LLM_TRACE_OUTPUT_DIR", str(tmp_path))
+    _reset_settings()
+
+    app = FastAPI()
+    app.add_middleware(TraceIdMiddleware)
+    register_exception_handlers(app)
+
+    @app.get("/audit")
+    async def audit():
+        add_event({
+            "event": "probe_event",
+            "prompt_name": "b4_attachment_content",
+            "label": "B-4",
+        })
+        return {"ok": True}
+
+    c = TestClient(app)
+    r = c.get("/audit", headers={"X-Trace-Id": "trace-html-12345678"})
+    assert r.status_code == 200
+
+    html_files = sorted(Path(tmp_path).glob("*.html"))
+    assert html_files
+    html = html_files[0].read_text(encoding="utf-8")
+    assert "probe_event" in html
+    assert "trace-html-12345678" in html

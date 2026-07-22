@@ -58,4 +58,5 @@ config/config-local-*.yaml
 .github/
 .qoder/
 extract_md.py
+.tmp-*.patch
 

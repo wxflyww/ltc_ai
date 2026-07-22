@@ -28,6 +28,14 @@ class AuthSettings(BaseModel):
     api_keys: List[str] = []
 
 
+class DebugSettings(BaseModel):
+    llm_trace: bool = False
+    llm_trace_max_chars: int = 2000
+    llm_trace_prompts: List[str] = []
+    llm_trace_write_html: bool = True
+    llm_trace_output_dir: str = "tmp/llm-trace-audit"
+
+
 class SigningPresetSettings(BaseModel):
     base_url: str = ""
     path: str = "/api/v1/signature-presets/by-entity-name"
@@ -93,6 +101,7 @@ class Settings(BaseSettings):
     server: ServerSettings = ServerSettings()
     llm: LlmSettings = LlmSettings()
     auth: AuthSettings = AuthSettings()
+    debug: DebugSettings = DebugSettings()
     signing_preset: SigningPresetSettings = SigningPresetSettings()
     app: AppMeta = AppMeta()
 

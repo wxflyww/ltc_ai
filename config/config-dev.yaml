@@ -1,13 +1,13 @@
-llm:
-  base_url: "https://models.inference.ai.azure.com"
-  model: "gpt-4o-mini"
-  timeout: 300
+# llm:
+#   base_url: "https://models.inference.ai.azure.com"
+#   model: "gpt-4o-mini"
+#   timeout: 300
 # ======== GitHub Models 配置 ========
 
-#llm:
-# base_url: "http://192.168.16.10:8080/v1"
-# model: "Qwen3.6-35B"
-# timeout: 300  
+llm:
+  base_url: "http://192.168.16.10:8080/v1"
+  model: "Qwen3.6-35B"
+  timeout: 300  
 #  ======== 本地 vLLM 配置 ========
 
 
@@ -18,3 +18,11 @@ signing_preset:
   base_url: "http://127.0.0.1:9800"
   path: "/api/v1/signature-presets/by-entity-name"
   timeout: 3.0
+
+# 调试开关（排查模型输出时启用）
+# debug:
+#   llm_trace: true
+#   llm_trace_max_chars: 4000
+#   llm_trace_prompts: ["b4_attachment_content"]  # 空数组表示全量；填 prompt 名表示仅采样指定能力
+#   llm_trace_write_html: true
+#   llm_trace_output_dir: "tmp/llm-trace-audit"

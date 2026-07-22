@@ -31,7 +31,7 @@ CONTRACT_PARTY_SCHEMA = _object({
 
 CHECK_ITEM_SCHEMA = _object({
     "result": {"type": "string", "enum": ["PASS", "WARN", "FAIL", "NA"]},
-    "block_level": {"type": "string"},
+    "block_level": {"type": "string", "enum": ["通过", "提示", "硬阻断", "不适用"]},
     "reason": _nullable_string(),
 })
 

@@ -53,3 +53,7 @@ class ModelFormatError(AppError):
 
 class ModelInputTooLongError(ModelFormatError):
     http_status = 400
+
+
+class ModelOutputTooLongError(ModelFormatError):
+    """模型输出达到长度上限或被截断。"""

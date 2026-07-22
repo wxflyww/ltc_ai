@@ -2,13 +2,16 @@ from unittest.mock import patch
 
 from app.capabilities.contract_review.schemas import AttachmentInput, ContractReviewRequest, SystemPreset
 from app.capabilities.contract_review.service import (
+    _log_llm_trace,
     _invoke_json_prompt,
+    _parse_model_checks,
     _preprocess_request,
     _run_b1,
     review_contract,
     run_review_pipeline,
 )
-from app.core.errors import ModelFormatError
+from app.core.config import _reset_settings
+from app.core.errors import ModelFormatError, ModelInputTooLongError, ModelOutputTooLongError
 import pytest
 
 
@@ -52,6 +55,36 @@ def test_review_contract_does_not_call_real_llm_in_unit_test():
         with patch("app.capabilities.contract_review.service.run_review_pipeline", return_value=[]):
             review_contract(request, check_time="2026-07-07T10:00:00")
     fake_invoke.assert_not_called()
+
+
+def test_review_contract_converts_context_length_error_to_blocking_check():
+    request = ContractReviewRequest(contract_md="# 合同", attachments=[])
+    with patch(
+        "app.capabilities.contract_review.service.run_review_pipeline",
+        side_effect=ModelInputTooLongError("B-1-附件一内容过长，超过模型单次处理长度限制，请拆分该部分内容或减少单次上传内容后重试"),
+    ):
+        data = review_contract(request, check_time="2026-07-21T10:00:00")
+
+    assert data.overall_result == "BLOCK"
+    assert len(data.checks) == 1
+    assert data.checks[0].id == "模型上下文长度"
+    assert data.checks[0].block_level == "硬阻断"
+    assert "B-1-附件一内容过长" in (data.checks[0].reason or "")
+
+
+def test_review_contract_converts_output_length_error_to_blocking_check():
+    request = ContractReviewRequest(contract_md="# 合同", attachments=[])
+    with patch(
+        "app.capabilities.contract_review.service.run_review_pipeline",
+        side_effect=ModelOutputTooLongError("B-4-附件一模型输出达到长度上限，结果被截断，请缩小检查范围或拆分内容后重试"),
+    ):
+        data = review_contract(request, check_time="2026-07-21T10:00:00")
+
+    assert data.overall_result == "BLOCK"
+    assert len(data.checks) == 1
+    assert data.checks[0].id == "模型输出长度"
+    assert data.checks[0].block_level == "硬阻断"
+    assert "模型输出达到长度上限" in (data.checks[0].reason or "")
 
 
 def test_review_contract_blocks_when_declared_attachments_missing():
@@ -386,6 +419,119 @@ def test_invoke_json_prompt_converts_context_length_error_with_label():
     assert "超过模型单次处理长度限制" in str(exc.value)
 
 
+def test_invoke_json_prompt_converts_tokens_limit_reached_error_with_label():
+    def fake_invoke(model, messages, response_format=None):
+        raise Exception('{"error":{"code":"tokens_limit_reached","message":"input too long"}}')
+
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
+            with pytest.raises(ModelFormatError) as exc:
+                _invoke_json_prompt(
+                    "b1_appellation",
+                    validation_label="B-1-附件二",
+                    parties=[],
+                    scope_label="附件二",
+                    segment_text="很长的附件",
+                )
+
+    assert "B-1-附件二内容过长" in str(exc.value)
+    assert "超过模型单次处理长度限制" in str(exc.value)
+
+
+def test_invoke_json_prompt_converts_length_finish_reason_error_with_label():
+    def fake_invoke(model, messages, response_format=None):
+        raise Exception(
+            "openai.LengthFinishReasonError: Could not parse response content as the length limit was reached "
+            "- CompletionUsage(completion_tokens=15496, prompt_tokens=888, total_tokens=16384)"
+        )
+
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
+            with pytest.raises(ModelFormatError) as exc:
+                _invoke_json_prompt(
+                    "b1_appellation",
+                    validation_label="B-1-附件三",
+                    parties=[],
+                    scope_label="附件三",
+                    segment_text="很长的附件",
+                )
+
+    assert "B-1-附件三模型输出达到长度上限" in str(exc.value)
+    assert "结果被截断" in str(exc.value)
+
+
+def test_parse_model_checks_normalizes_block_level_wu_by_result():
+    payload = {
+        "checks": [
+            {"result": "WARN", "block_level": "无", "reason": "称谓存在不一致"},
+            {"result": "FAIL", "block_level": "无", "reason": "存在冲突"},
+            {"result": "NA", "block_level": "无", "reason": "无附件"},
+        ]
+    }
+
+    items = _parse_model_checks(payload, "B-1", "称谓一致性")
+
+    assert [item.block_level for item in items] == ["提示", "硬阻断", "不适用"]
+
+
+def test_parse_model_checks_normalizes_chinese_result_and_english_block_level():
+    payload = {
+        "checks": [
+            {"result": "通过", "block_level": "pass", "reason": None},
+        ]
+    }
+
+    items = _parse_model_checks(payload, "B-4", "附件内容一致性")
+
+    assert items[0].result == "PASS"
+    assert items[0].block_level == "通过"
+
+
+def test_log_llm_trace_filters_by_prompt(monkeypatch, caplog):
+    monkeypatch.setenv("LTC_ENV", "dev")
+    monkeypatch.setenv("LTC__DEBUG__LLM_TRACE", "true")
+    monkeypatch.setenv("LTC__DEBUG__LLM_TRACE_PROMPTS", '["b4_attachment_content"]')
+    _reset_settings()
+
+    caplog.clear()
+    caplog.set_level("INFO", logger="contract_review")
+
+    _log_llm_trace("invoke_json_prompt_response", prompt_name="b1_appellation", label="B-1")
+    _log_llm_trace("invoke_json_prompt_response", prompt_name="b4_attachment_content", label="B-4")
+
+    logs = [record.message for record in caplog.records if record.name == "contract_review"]
+    assert logs.count("contract review llm trace") == 1
+
+
+def test_invoke_json_prompt_logs_invoke_error_event(monkeypatch, caplog):
+    monkeypatch.setenv("LTC_ENV", "dev")
+    monkeypatch.setenv("LTC__DEBUG__LLM_TRACE", "true")
+    _reset_settings()
+
+    caplog.clear()
+    caplog.set_level("INFO", logger="contract_review")
+
+    def fake_invoke(model, messages, response_format=None):
+        raise Exception(
+            "openai.LengthFinishReasonError: Could not parse response content as the length limit was reached "
+            "- CompletionUsage(completion_tokens=15496, prompt_tokens=888, total_tokens=16384)"
+        )
+
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
+            with pytest.raises(ModelFormatError):
+                _invoke_json_prompt(
+                    "b4_attachment_content",
+                    validation_label="B-4-附件一",
+                    baseline={"header": {}, "signature": {}, "preset": None},
+                    attachment_text="附件内容",
+                )
+
+    payloads = [record.__dict__.get("payload", {}) for record in caplog.records if record.name == "contract_review"]
+    invoke_error = next(payload for payload in payloads if payload.get("event") == "invoke_json_prompt_invoke_error")
+    assert invoke_error.get("length_issue") == "output"
+
+
 def test_run_b1_retries_when_reason_is_too_generic():
     outputs = [
         '{"checks":[{"result":"WARN","block_level":"提示","reason":"称谓存在不一致"}]}',
@@ -403,3 +549,39 @@ def test_run_b1_retries_when_reason_is_too_generic():
     assert items[0].result == "WARN"
     assert "乙方称谓不一致" in items[0].reason
     assert "供应商（乙方）" in items[0].reason
+
+
+def test_run_b1_adds_scope_prefix_and_segment_name():
+    outputs = [
+        '{"checks":[{"result":"WARN","block_level":"提示","reason":"乙方称谓不一致：合同首部为供应商（乙方），正文第3条使用卖方。"}]}',
+    ]
+
+    def fake_invoke(model, messages, response_format=None):
+        return outputs.pop(0), {"total_tokens": 1}
+
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
+            items = _run_b1("合同正文", [], [], [])
+
+    assert len(items) == 1
+    assert items[0].name == "称谓一致性-合同正文"
+    assert (items[0].reason or "").startswith("【范围】合同正文")
+
+
+def test_run_b1_deduplicates_same_reason_items():
+    outputs = [
+        '{"checks":['
+        '{"result":"WARN","block_level":"提示","reason":"乙方称谓不一致：合同首部为供应商（乙方），正文第3条使用卖方。"},'
+        '{"result":"WARN","block_level":"提示","reason":"乙方称谓不一致：合同首部为供应商（乙方），正文第3条使用卖方。"}'
+        ']}'
+    ]
+
+    def fake_invoke(model, messages, response_format=None):
+        return outputs.pop(0), {"total_tokens": 1}
+
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
+            items = _run_b1("合同正文", [], [], [])
+
+    assert len(items) == 1
+    assert items[0].result == "WARN"

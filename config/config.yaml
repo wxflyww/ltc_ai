@@ -9,3 +9,9 @@ llm:
   timeout: 30
 auth:
   api_keys: []
+debug:
+  llm_trace: false
+  llm_trace_max_chars: 2000
+  llm_trace_prompts: []
+  llm_trace_write_html: true
+  llm_trace_output_dir: "tmp/llm-trace-audit"
