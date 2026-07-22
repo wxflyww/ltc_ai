@@ -52,9 +52,45 @@
 #### Scenario: B-1 单个分段超过模型上下文
 
 - 当 B-1 的合同正文或某个附件分段超过模型单次处理长度限制时
-- 则系统 SHALL 返回 code 为 20003 的受控错误
-- 且 HTTP 状态 SHALL 为 400
-- 且错误信息 SHALL 明确指出超长的检查范围
+- 或模型返回 `tokens_limit_reached` 等上下文超长错误时
+- 则系统 SHALL 在评审结果中返回一个 `FAIL` 且 `block_level` 为 `硬阻断` 的检查项
+- 且该检查项 SHALL 返回给调用方用于阻断后续流程
+- 且该检查项 reason SHALL 明确指出超长的检查范围
+- 且评审结果 overall_result SHALL 为 `BLOCK`
+
+#### Scenario: 模型输出达到长度上限
+
+- 当模型调用返回 `LengthFinishReasonError` 或 `length limit was reached` 等输出截断错误时
+- 则系统 SHALL 在评审结果中返回一个 `FAIL` 且 `block_level` 为 `硬阻断` 的检查项
+- 且该检查项 id SHALL 为 `模型输出长度`
+- 且该检查项 reason SHALL 明确提示“模型输出达到长度上限，结果被截断”
+- 且系统 SHALL 不得将该错误误标为输入上下文超长
+
+### Requirement: B-1 输出结果可追溯且去重
+
+系统 SHALL 为 B-1 每条结果提供分段可追溯信息，并避免重复语义告警干扰调用方。
+
+#### Scenario: B-1 结果携带检查范围
+
+- 当系统完成任一 B-1 分段检查时
+- 则该分段输出项 name SHALL 包含分段范围信息（如 `称谓一致性-合同正文`、`称谓一致性-附件1...`）
+- 且该分段输出项 reason SHALL 包含范围前缀（如 `【范围】合同正文`）
+
+#### Scenario: B-1 重复与噪声告警过滤
+
+- 当同一分段中出现语义重复的 B-1 告警时
+- 则系统 SHALL 在输出前进行去重，避免重复记录
+- 且当告警内容不属于称谓一致性问题时，系统 SHALL 过滤该噪声告警
+
+### Requirement: 模型调用异常审计可区分长度问题类型
+
+系统 SHALL 在 LLM 审计事件中记录调用异常，并标注长度问题类型，便于排查输入超限与输出截断。
+
+#### Scenario: 审计记录调用异常与长度分类
+
+- 当任一模型调用抛出异常时
+- 则系统 SHALL 记录模型调用异常审计事件
+- 且当异常属于长度问题时，审计事件 SHALL 包含 `length_issue=input|output` 分类信息
 
 ### Requirement: 合同组织评审输出模型调用统计
 

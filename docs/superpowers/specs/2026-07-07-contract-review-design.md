@@ -172,6 +172,18 @@ API 入参：
 - LLM 返回空内容、非 JSON、缺少必填字段或 JSON 解析失败：`20003`。
 - 未捕获异常：`29999`。
 
+长度问题业务化返回：
+
+- 检测到输入上下文超长（如 `tokens_limit_reached`、`context length`）时，系统返回业务检查项：
+  - `id=name=模型上下文长度`
+  - `result=FAIL`
+  - `block_level=硬阻断`
+- 检测到模型输出长度截断（如 `LengthFinishReasonError`、`length limit was reached`）时，系统返回业务检查项：
+  - `id=name=模型输出长度`
+  - `result=FAIL`
+  - `block_level=硬阻断`
+- 两类长度问题都视为阻断项，`overall_result` 应为 `BLOCK`。
+
 ## Framework Integration
 
 合同审核能力作为独立 capability 接入现有薄分层架构：
@@ -470,13 +482,21 @@ address, phone, fax, website, postal_code
 
 ## Pipeline B-1: Appellation Consistency
 
-输入为：
+B-1 按检查范围分段执行，不将正文和附件拼接为一次大输入。
+
+输入与执行方式：
 
 ```text
-full_text + all attachment texts
+1) 合同正文（scope=合同正文）
+2) 每份已解析附件（scope=附件标题或上传文件名）
 ```
 
-LLM 直接输出 `PASS` 或 `FAIL`。后端不做二次语义判断。
+- 每个分段独立调用一次 LLM，输出 `checks` 列表。
+- 后端为每条 B-1 结果补充可追溯范围：
+  - `name` 统一为 `称谓一致性-<scope>`。
+  - `reason` 前缀统一为 `【范围】<scope>`。
+- 后端会过滤非称谓噪声告警，并对重复语义告警去重。
+- 当模型返回“称谓存在不一致”等泛化原因时，后端会触发一次补充说明重试，要求返回具体主体和上下文。
 
 ## Pipeline B-4: Attachment Content Consistency
 
@@ -546,6 +566,11 @@ system_preset.authorized_reps
 - 声明 3 份附件但只获取 2 份时 FAIL。
 - 标题未匹配附件仍进入 B-4。
 - 同一检查项同时产生 FAIL 和 WARN 时，最终 `checks` 保留两条。
+- 输入上下文超长返回 `模型上下文长度` 硬阻断。
+- 模型输出被长度截断返回 `模型输出长度` 硬阻断。
+- B-1 输出 `name` 包含分段范围，`reason` 包含 `【范围】` 前缀。
+- B-1 重复告警会去重，非称谓噪声项会被过滤。
+- 模型调用异常审计事件包含 `length_issue=input|output` 分类。
 
 ## Implementation Notes
 
@@ -554,3 +579,5 @@ system_preset.authorized_reps
 - 所有字段空值判断统一使用 `None`、空字符串、纯空白、字符串 `"null"` 为空。
 - 金额计算使用 `Decimal`，避免浮点误差。
 - `bank_account`、`phone`、`fax`、`website`、`postal_code` 比对前做全半角归一化。
+- 开启 LLM trace 后，模型调用异常事件使用 `invoke_json_prompt_invoke_error` / `invoke_json_prompt_retry_invoke_error`，并记录长度问题分类。
+- 长度问题优先做输入/输出分类，不将输出截断误标为输入超长。

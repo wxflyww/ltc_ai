@@ -123,3 +123,30 @@ Prompt 模板存放在 `prompts/` 目录下的 YAML 文件，通过 `app/capabil
 - 模型层边界统一 mock，CI 不依赖 vLLM 可用性
 - 使用 `TestClient` 测试 API 契约
 - 中间件测试使用 `create_app(register_middleware=False)` 禁用中间件以隔离测试
+
+## 变更编排流程（Skill + Script）
+
+仓库提供两阶段变更编排：`Explore -> Propose`。
+
+- Skill（大脑）：`.agents/skills/change-orchestrator/SKILL.md`
+- Script（手脚）：`scripts/change_orchestrator.ps1`
+- Playbook：`docs/superpowers/playbooks/change-orchestrator.md`
+
+推荐命令：
+
+```powershell
+# 1) 先讨论，判断是否需要创建 OpenSpec change
+./scripts/change_orchestrator.ps1 -Mode explore -Title "B-1 reason wording" -Impact "api message wording" -Concern "avoid ambiguity"
+
+# 2) 决定立项后，创建 change 骨架
+./scripts/change_orchestrator.ps1 -Mode propose -ChangeName b1-reason-wording -Title "B-1 reason wording" -Capability contract-review
+
+# 3) 提交流程前执行严格校验
+./scripts/change_orchestrator.ps1 -Mode validate -ChangeName b1-reason-wording
+```
+
+执行约定：
+
+- 先 explore 再 propose，避免先建 change 后改方向。
+- 调用方可见行为变化，默认走 OpenSpec change。
+- `design.md` 为可选工件，仅在多方案权衡或架构调整时补齐。

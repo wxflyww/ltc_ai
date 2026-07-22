@@ -375,3 +375,38 @@ git diff --check
 - `_preprocess_request()` 是唯一接入点，后续检查链路保持现有结构。
 - 计划中没有占位内容。
 
+---
+
+## 已完成增量（2026-07 会话追加）
+
+本计划落地后，已完成以下增强并在代码中生效：
+
+- 长度问题分类：区分“输入上下文超长”和“模型输出截断”。
+- 阻断项业务化：
+    - 输入超长返回 `模型上下文长度`（`FAIL` + `硬阻断`）。
+    - 输出截断返回 `模型输出长度`（`FAIL` + `硬阻断`）。
+- B-1 可追溯增强：
+    - `name` 输出为 `称谓一致性-<范围>`。
+    - `reason` 增加 `【范围】<范围>` 前缀。
+- B-1 结果治理：重复告警去重，过滤非称谓噪声。
+- 审计增强：模型调用异常事件（含重试异常）记录 `length_issue=input|output` 分类信息。
+
+## 验证结果（2026-07 会话）
+
+- 合同评审相关回归通过，含：
+    - 输出长度截断阻断项测试。
+    - 调用异常审计事件测试。
+    - B-1 范围前缀与去重测试。
+    - 中间件链路 HTML 审计落盘测试。
+- 阶段性汇总结果：`47 passed, 1 warning`。
+
+## 文档同步状态
+
+- OpenSpec 已同步：
+    - `openspec/changes/split-embedded-attachments/proposal.md`
+    - `openspec/changes/split-embedded-attachments/tasks.md`
+    - `openspec/changes/split-embedded-attachments/specs/contract-review/spec.md`
+- Superpowers 已同步：
+    - `docs/superpowers/plans/2026-07-10-split-embedded-attachments.md`
+    - `docs/superpowers/specs/2026-07-07-contract-review-design.md`
+

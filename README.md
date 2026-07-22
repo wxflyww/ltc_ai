@@ -96,6 +96,27 @@ $env:LTC_ENV="dev"; $env:LTC__AUTH__API_KEYS='["7C218CEA-1BD7-48B1-B839-62F03FB0
 
 测试在模型层边界 mock，CI 不依赖 vLLM 可用性。
 
+## 变更编排器（Explore -> Propose）
+
+仓库提供了“Skill 作为大脑 + 脚本作为手脚”的最小编排器：
+
+- Skill: `.agents/skills/change-orchestrator/SKILL.md`
+- Script: `scripts/change_orchestrator.ps1`
+- Playbook: `docs/superpowers/playbooks/change-orchestrator.md`
+
+常用命令：
+
+```powershell
+# 1) 先讨论，判断要不要建 OpenSpec change
+./scripts/change_orchestrator.ps1 -Mode explore -Title "B-1 reason wording" -Impact "api message wording" -Concern "avoid ambiguity"
+
+# 2) 确认立项后创建 change 骨架
+./scripts/change_orchestrator.ps1 -Mode propose -ChangeName b1-reason-wording -Title "B-1 reason wording" -Capability contract-review
+
+# 3) 执行严格校验
+./scripts/change_orchestrator.ps1 -Mode validate -ChangeName b1-reason-wording
+```
+
 ## 容器部署
 
 ```bash
