@@ -6,7 +6,7 @@ from langchain_openai import ChatOpenAI
 from prometheus_client import Counter, Histogram
 
 from app.core.config import get_settings
-from app.core.errors import ModelTimeoutError
+from app.core.errors import ModelOutputTooLongError, ModelTimeoutError
 from app.core.logging import get_logger
 
 logger = get_logger("llm")
@@ -56,6 +56,11 @@ def invoke_model(
     except TimeoutError as e:
         llm_calls_total.labels(model=model_name, status="timeout").inc()
         raise ModelTimeoutError(str(e)) from e
+    finish_reason = str((getattr(resp, "response_metadata", None) or {}).get("finish_reason", "")).lower()
+    if finish_reason == "length":
+        llm_calls_total.labels(model=model_name, status="output_length").inc()
+        raise ModelOutputTooLongError("finish_reason=length")
+
     elapsed = time.perf_counter() - start
     llm_call_duration_seconds.labels(model=model_name).observe(elapsed)
 

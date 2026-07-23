@@ -169,6 +169,8 @@ def _normalize_block_level(raw_level, result: str) -> str:
 
 
 def _detect_length_issue(exc: Exception) -> str | None:
+    if isinstance(exc, ModelOutputTooLongError):
+        return "output"
     text = str(exc).lower()
     output_like = (
         "lengthfinishreasonerror" in text
@@ -389,25 +391,93 @@ def _has_generic_b1_reason(items: list[CheckItem]) -> bool:
 _B1_NON_APPELLATION_HINTS = (
     "本合同",
     "本协议",
+    "本项目",
+    "该项目",
+    "双方",
+    "本条",
+    "上述",
     "措辞",
     "行文",
     "建议统一",
 )
 
+_B1_REASON_MAX_CHARS = 160
+
+
+def _truncate_b1_reason(text: str) -> str:
+    if len(text) <= _B1_REASON_MAX_CHARS:
+        return text
+    return text[: _B1_REASON_MAX_CHARS - 1].rstrip() + "…"
+
+
+def _decompose_b1_reason_tags(text: str) -> tuple[str, str, str]:
+    # Supports legacy tagged reasons:
+    # 【主体】...【基准称谓】...【发现称谓】...【证据】...
+    def _extract(tag: str, fallback: str = "") -> str:
+        if tag not in text:
+            return fallback
+        start = text.find(tag) + len(tag)
+        end = len(text)
+        for nxt in ("【主体】", "【基准称谓】", "【发现称谓】", "【证据】"):
+            idx = text.find(nxt, start)
+            if idx != -1:
+                end = min(end, idx)
+        return text[start:end].strip()
+
+    subject = _extract("【主体】")
+    baseline = _extract("【基准称谓】")
+    found = _extract("【发现称谓】")
+    evidence = _extract("【证据】")
+
+    # If this is not tagged content, keep as plain evidence.
+    if not any((subject, baseline, found, evidence)):
+        return "", "", text.strip()
+
+    sentence = evidence
+    if found:
+        if baseline and found != baseline:
+            sentence = f"{subject or '该主体'}称谓疑似不一致，发现“{found}”，基准为“{baseline}”。证据：{evidence}"
+        else:
+            sentence = f"{subject or '该主体'}称谓未见不一致。证据：{evidence}"
+    elif baseline:
+        sentence = f"{subject or '该主体'}基准称谓为“{baseline}”。证据：{evidence}"
+
+    return subject, found, sentence.strip()
+
 
 def _ensure_b1_scope_prefix(reason: str | None, scope_label: str) -> str:
     text = (reason or "").strip()
+    natural_prefix = f"{scope_label}中："
     if not text:
-        return f"【范围】{scope_label}"
+        return natural_prefix
+    if text.startswith(natural_prefix):
+        return _truncate_b1_reason(text)
     if text.startswith("【范围】"):
-        return text
-    return f"【范围】{scope_label} {text}"
+        normalized = text.removeprefix("【范围】").strip()
+        if normalized.startswith(scope_label):
+            normalized = normalized[len(scope_label):].strip()
+        if normalized.startswith("：") or normalized.startswith(":"):
+            normalized = normalized[1:].strip()
+        normalized = _decompose_b1_reason_tags(normalized)[2]
+        return _truncate_b1_reason(f"{natural_prefix}{normalized}" if normalized else natural_prefix)
+    _, _, natural = _decompose_b1_reason_tags(text)
+    return _truncate_b1_reason(f"{natural_prefix}{natural}")
 
 
 def _is_b1_noise(item: CheckItem) -> bool:
     if item.result not in {"WARN", "FAIL"}:
         return False
     text = (item.reason or "")
+    _, found, _ = _decompose_b1_reason_tags(text)
+
+    # Non-subject words should not be treated as discovered appellations.
+    if found and found in _B1_NON_APPELLATION_HINTS:
+        return True
+
+    # Natural-language variant: if the sentence only talks about generic document nouns.
+    if any(token in text for token in ("本合同", "本协议", "本项目", "双方")) and "称谓" not in text:
+        return True
+
     if "称谓" not in text:
         return True
     return any(token in text for token in _B1_NON_APPELLATION_HINTS)

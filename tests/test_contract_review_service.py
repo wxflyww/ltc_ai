@@ -565,7 +565,7 @@ def test_run_b1_adds_scope_prefix_and_segment_name():
 
     assert len(items) == 1
     assert items[0].name == "称谓一致性-合同正文"
-    assert (items[0].reason or "").startswith("【范围】合同正文")
+    assert (items[0].reason or "").startswith("合同正文中：")
 
 
 def test_run_b1_deduplicates_same_reason_items():
@@ -585,3 +585,99 @@ def test_run_b1_deduplicates_same_reason_items():
 
     assert len(items) == 1
     assert items[0].result == "WARN"
+
+
+def test_run_b1_normalizes_legacy_scope_prefix_to_natural_language():
+    outputs = [
+        '{"checks":[{"result":"WARN","block_level":"\u63d0\u793a","reason":"\u3010\u8303\u56f4\u3011\u5408\u540c\u6b63\u6587\u3010\u4e3b\u4f53\u3011\u4e59\u65b9\u3010\u57fa\u51c6\u79f0\u8c13\u3011\u4f9b\u5e94\u5546\uff08\u4e59\u65b9\uff09\u3010\u53d1\u73b0\u79f0\u8c13\u3011\u5356\u65b9\u3010\u8bc1\u636e\u3011\u7b2c3\u6761\u4f7f\u7528\u5356\u65b9\u3002"}]}'
+    ]
+
+    def fake_invoke(model, messages, response_format=None):
+        return outputs.pop(0), {"total_tokens": 1}
+
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
+            items = _run_b1("\u5408\u540c\u6b63\u6587", [], [], [])
+
+    assert (items[0].reason or "").startswith("\u5408\u540c\u6b63\u6587\u4e2d\uff1a")
+    assert "\u3010\u4e3b\u4f53\u3011" not in (items[0].reason or "")
+
+
+def test_run_b1_filters_generic_document_nouns_as_noise():
+    outputs = [
+        '{"checks":[{"result":"WARN","block_level":"提示","reason":"合同正文中：乙方【基准称谓】乙方【发现称谓】本合同【证据】第10条出现本合同项下责任。"}]}'
+    ]
+
+    def fake_invoke(model, messages, response_format=None):
+        return outputs.pop(0), {"total_tokens": 1}
+
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
+            items = _run_b1("合同正文", [], [], [])
+
+    assert len(items) == 1
+    assert items[0].result == "PASS"
+
+
+def test_run_b1_reason_is_truncated_to_max_length():
+    long_reason = "乙方称谓不一致：" + ("证据" * 200)
+    outputs = [
+        f'{{"checks":[{{"result":"WARN","block_level":"提示","reason":"{long_reason}"}}]}}'
+    ]
+
+    def fake_invoke(model, messages, response_format=None):
+        return outputs.pop(0), {"total_tokens": 1}
+
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
+            items = _run_b1("合同正文", [], [], [])
+
+    assert len(items) == 1
+    assert items[0].result == "WARN"
+    assert items[0].reason is not None
+    assert len(items[0].reason) <= 160
+    assert "…" in items[0].reason
+
+
+def test_run_b1_converts_tagged_reason_to_natural_language_sentence():
+    outputs = [
+        '{"checks":[{"result":"WARN","block_level":"提示","reason":"【范围】合同正文【主体】乙方【基准称谓】东软集团股份有限公司【发现称谓】中国移动北京公司【证据】合同名称中出现中国移动北京公司与东软集团股份有限公司采购合同。"}]}'
+    ]
+
+    def fake_invoke(model, messages, response_format=None):
+        return outputs.pop(0), {"total_tokens": 1}
+
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
+            items = _run_b1("合同正文", [], [], [])
+
+    assert len(items) == 1
+    assert items[0].reason is not None
+    assert items[0].reason.startswith("合同正文中：")
+    assert "【基准称谓】" not in items[0].reason
+    assert "【发现称谓】" not in items[0].reason
+    assert "【证据】" not in items[0].reason
+
+
+def test_invoke_json_prompt_logs_metadata_output_length(monkeypatch, caplog):
+    monkeypatch.setenv("LTC__DEBUG__LLM_TRACE", "true")
+    _reset_settings()
+
+    caplog.clear()
+    caplog.set_level("INFO", logger="contract_review")
+
+    def fake_invoke(model, messages, response_format=None):
+        raise ModelOutputTooLongError("finish_reason=length")
+
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
+            with pytest.raises(ModelOutputTooLongError):
+                _invoke_json_prompt(
+                    "a1a_party_extraction",
+                    validation_label="A-1a",
+                    full_text="contract",
+                )
+
+    payloads = [record.__dict__.get("payload", {}) for record in caplog.records if record.name == "contract_review"]
+    invoke_error = next(payload for payload in payloads if payload.get("event") == "invoke_json_prompt_invoke_error")
+    assert invoke_error.get("length_issue") == "output"

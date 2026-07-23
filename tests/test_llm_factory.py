@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.core.errors import ModelTimeoutError
+from app.core.errors import ModelOutputTooLongError, ModelTimeoutError
 from app.models import llm
 
 
@@ -69,4 +69,16 @@ def test_invoke_model_other_error_reraises():
     fake_model = MagicMock()
     fake_model.invoke.side_effect = RuntimeError("boom")
     with pytest.raises(RuntimeError):
+        llm.invoke_model(fake_model, [MagicMock()])
+
+
+def test_invoke_model_raises_output_length_error_when_finish_reason_is_length():
+    fake_ai = MagicMock()
+    fake_ai.content = '{"checks": []}'
+    fake_ai.usage_metadata = {"prompt_tokens": 1, "completion_tokens": 8, "total_tokens": 9}
+    fake_ai.response_metadata = {"finish_reason": "length"}
+    fake_model = MagicMock()
+    fake_model.invoke.return_value = fake_ai
+
+    with pytest.raises(ModelOutputTooLongError):
         llm.invoke_model(fake_model, [MagicMock()])

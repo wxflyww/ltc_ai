@@ -1,0 +1,4 @@
+- [x] Confirm scope and acceptance criteria
+- [x] Implement code and tests
+- [x] Sync OpenSpec and Superpowers docs
+- [x] Pass validate and regression checks
