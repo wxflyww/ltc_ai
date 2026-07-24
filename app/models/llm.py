@@ -67,8 +67,8 @@ def invoke_model(
     content = resp.content if isinstance(resp.content, str) else str(resp.content)
     usage_meta = getattr(resp, "usage_metadata", None) or {}
     usage = {
-        "prompt_tokens": int(usage_meta.get("prompt_tokens", 0)),
-        "completion_tokens": int(usage_meta.get("completion_tokens", 0)),
+        "prompt_tokens": int(usage_meta.get("input_tokens", 0) or usage_meta.get("prompt_tokens", 0)),
+        "completion_tokens": int(usage_meta.get("output_tokens", 0) or usage_meta.get("completion_tokens", 0)),
         "total_tokens": int(usage_meta.get("total_tokens", 0)),
     }
     llm_tokens_total.labels(model=model_name, type="prompt").inc(usage["prompt_tokens"])
