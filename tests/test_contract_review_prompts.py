@@ -46,3 +46,10 @@ def test_parse_json_object_removes_think_block_before_extracting_json():
 def test_parse_json_object_raises_for_text_without_json_object():
     with pytest.raises(ModelFormatError):
         parse_json_object("根据合同内容，未发现可提取信息。")
+
+def test_a3_prompt_includes_total_amount_and_evidence_example():
+    messages = build_prompt("a3_amount_payment", full_text="合同最终含税总价为100元。")
+    content = messages[1].content
+
+    assert '"total_amount_numeric": "100"' in content
+    assert '"total_amount_evidence": "本合同最终含税总价为100元（大写：壹佰元整）。"' in content

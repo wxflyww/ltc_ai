@@ -27,11 +27,34 @@ def _object(
 CONTRACT_PARTY_SCHEMA = _object({
     "role": _nullable_string(),
     "name": _nullable_string(),
+    "aliases": {"type": "array", "items": {"type": "string"}},
+})
+
+B1_OBSERVATION_SCHEMA = _object({
+    "result": {"type": "string", "enum": ["PASS", "WARN", "FAIL", "NA"]},
+    "block_level": {"type": "string", "enum": ["通过", "提示", "硬阻断", "不适用"]},
+    "role": _nullable_string(),
+    "baseline_appellation": _nullable_string(),
+    "found_appellation": _nullable_string(),
+    "evidence_quote": _nullable_string(),
+    "evidence_type": {
+        "type": ["string", "null"],
+        "enum": ["party_appellation", "party_definition", "role_without_definition", "contract_or_project_name", "background_reference", "unknown", None],
+    },
 })
 
 CHECK_ITEM_SCHEMA = _object({
     "result": {"type": "string", "enum": ["PASS", "WARN", "FAIL", "NA"]},
     "block_level": {"type": "string", "enum": ["通过", "提示", "硬阻断", "不适用"]},
+    "reason": _nullable_string(),
+})
+
+B4_OBSERVATION_SCHEMA = _object({
+    "result": {"type": "string", "enum": ["PASS", "WARN", "FAIL", "NA"]},
+    "block_level": {"type": "string", "enum": ["通过", "提示", "硬阻断", "不适用"]},
+    "check_type": {"type": "string", "enum": ["total_amount", "other"]},
+    "attachment_value": _nullable_number(),
+    "attachment_evidence": _nullable_string(),
     "reason": _nullable_string(),
 })
 
@@ -95,6 +118,7 @@ RESPONSE_FORMATS: dict[str, dict[str, Any]] = {
                 "currency": _nullable_string(),
                 "payment_method": _nullable_string(),
                 "total_amount_numeric": _nullable_number(),
+                "total_amount_evidence": _nullable_string(),
                 "total_amount_uppercase": _nullable_string(),
                 "total_amount_match": {"type": ["boolean", "null"]},
                 "payment_stages": {
@@ -144,7 +168,7 @@ RESPONSE_FORMATS: dict[str, dict[str, Any]] = {
             "name": "contract_review_b1_appellation",
             "strict": True,
             "schema": _object({
-                "checks": {"type": "array", "items": CHECK_ITEM_SCHEMA},
+                "checks": {"type": "array", "items": B1_OBSERVATION_SCHEMA},
             }),
         },
     },
@@ -154,7 +178,7 @@ RESPONSE_FORMATS: dict[str, dict[str, Any]] = {
             "name": "contract_review_b4_attachment_content",
             "strict": True,
             "schema": _object({
-                "checks": {"type": "array", "items": CHECK_ITEM_SCHEMA},
+                "checks": {"type": "array", "items": B4_OBSERVATION_SCHEMA},
             }),
         },
     },

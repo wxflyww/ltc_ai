@@ -1,4 +1,5 @@
 import time
+from decimal import Decimal, InvalidOperation
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -436,11 +437,11 @@ def _decompose_b1_reason_tags(text: str) -> tuple[str, str, str]:
     sentence = evidence
     if found:
         if baseline and found != baseline:
-            sentence = f"{subject or '该主体'}称谓疑似不一致，发现“{found}”，基准为“{baseline}”。证据：{evidence}"
+            sentence = f"{subject or '该主体'}称谓疑似不一致，发现“{found}”，基准为“{baseline}”。证据“{evidence}”。"
         else:
-            sentence = f"{subject or '该主体'}称谓未见不一致。证据：{evidence}"
+            sentence = f"{subject or '该主体'}称谓未见不一致。证据“{evidence}”。"
     elif baseline:
-        sentence = f"{subject or '该主体'}基准称谓为“{baseline}”。证据：{evidence}"
+        sentence = f"{subject or '该主体'}基准称谓为“{baseline}”。证据“{evidence}”。"
 
     return subject, found, sentence.strip()
 
@@ -494,6 +495,24 @@ def _finalize_b1_items(items: list[CheckItem], scope_label: str) -> list[CheckIt
     finalized: list[CheckItem] = []
     seen: set[tuple[str, str, str, str]] = set()
     for item in items:
+        if item.result == "PASS":
+            normalized_item = CheckItem(
+                id=item.id,
+                name=f"称谓一致性-{scope_label}",
+                result="PASS",
+                block_level="通过",
+                reason=None,
+            )
+            fp = (
+                normalized_item.id,
+                normalized_item.name,
+                normalized_item.result,
+                "",
+            )
+            if fp not in seen:
+                seen.add(fp)
+                finalized.append(normalized_item)
+            continue
         reason = _ensure_b1_scope_prefix(item.reason, scope_label)
         normalized_item = CheckItem(
             id=item.id,
@@ -535,6 +554,121 @@ def _attachment_scope_label(attachment: dict) -> str:
     return str(attachment.get("title") or attachment.get("filename") or f"附件{attachment.get('index')}")
 
 
+
+_B1_STRUCTURED_FIELDS = {
+    "role",
+    "baseline_appellation",
+    "found_appellation",
+    "evidence_quote",
+    "evidence_type",
+}
+
+
+def _compact_b1_text(value: str | None) -> str:
+    return "".join(str(value or "").split())
+
+
+def _has_structured_b1_observation(payload: dict) -> bool:
+    checks = payload.get("checks", [])
+    return isinstance(checks, list) and any(
+        isinstance(item, dict) and bool(_B1_STRUCTURED_FIELDS & set(item))
+        for item in checks
+    )
+
+
+def _find_b1_party(parties: list[dict], role: str) -> dict | None:
+    for party in parties:
+        if str(party.get("role") or "").strip() == role:
+            return party
+    return None
+
+
+def _build_verified_b1_item(
+    observation: dict,
+    scope_label: str,
+    segment_text: str,
+    parties: list[dict],
+) -> CheckItem | None:
+    result = _normalize_result(observation.get("result"))
+    if result not in {"WARN", "FAIL"}:
+        return None
+
+    evidence_type = str(observation.get("evidence_type") or "").strip()
+    role = str(observation.get("role") or "").strip()
+    baseline = str(observation.get("baseline_appellation") or "").strip()
+    found = str(observation.get("found_appellation") or "").strip()
+    evidence = str(observation.get("evidence_quote") or "").strip()
+    party = _find_b1_party(parties, role)
+    if party is None or not baseline or baseline != str(party.get("name") or "").strip():
+        return None
+
+    compact_segment = _compact_b1_text(segment_text)
+    compact_evidence = _compact_b1_text(evidence)
+    if not compact_evidence or compact_evidence not in compact_segment:
+        return None
+
+    if evidence_type == "role_without_definition":
+        if scope_label == "合同正文":
+            return None
+        reason = _truncate_b1_reason(
+            f"{scope_label}中：出现“{role}”但未明确对应主体，无法核验是否与合同正文{role}一致。"
+            f"证据“{evidence}”。请补充主体定义。"
+        )
+    elif evidence_type in {"party_appellation", "party_definition"}:
+        aliases = {str(alias).strip() for alias in party.get("aliases", []) if str(alias).strip()}
+        allowed_appellations = {baseline, role, *aliases}
+        compact_found = _compact_b1_text(found)
+        if not found or found in allowed_appellations or compact_found not in compact_evidence:
+            return None
+        reason = _truncate_b1_reason(
+            f"{scope_label}中：{role}称谓疑似不一致，发现“{found}”，基准为“{baseline}”。"
+            f"证据“{evidence}”。请业务确认是否同一主体。"
+        )
+    else:
+        return None
+    return CheckItem(
+        id="B-1",
+        name=f"称谓一致性-{scope_label}",
+        result=result,
+        block_level=_normalize_block_level(observation.get("block_level"), result),
+        reason=reason,
+    )
+
+
+def _finalize_structured_b1_observations(
+    payload: dict,
+    scope_label: str,
+    segment_text: str,
+    parties: list[dict],
+) -> list[CheckItem]:
+    checks = payload.get("checks", [])
+    if not isinstance(checks, list):
+        raise ModelFormatError("B-1模型输出checks不是数组")
+
+    items: list[CheckItem] = []
+    seen_reasons: set[str] = set()
+    for observation in checks:
+        if not isinstance(observation, dict):
+            raise ModelFormatError("B-1模型输出checks元素不是对象")
+        item = _build_verified_b1_item(observation, scope_label, segment_text, parties)
+        if item is None:
+            continue
+        fingerprint = _b1_reason_fingerprint(item.reason)
+        if fingerprint in seen_reasons:
+            continue
+        seen_reasons.add(fingerprint)
+        items.append(item)
+
+    if items:
+        return items
+    return [CheckItem(
+        id="B-1",
+        name=f"称谓一致性-{scope_label}",
+        result="PASS",
+        block_level="通过",
+        reason=None,
+    )]
+
 def _run_b1_segment(
     scope_label: str,
     segment_text: str,
@@ -553,6 +687,9 @@ def _run_b1_segment(
         scope_label=scope_label,
         segment_text=segment_text,
     )
+    if _has_structured_b1_observation(payload):
+        return _finalize_structured_b1_observations(payload, scope_label, segment_text, parties)
+
     items = _parse_model_checks(payload, "B-1", "称谓一致性", prompt_name="b1_appellation")
     if not _has_generic_b1_reason(items):
         return _finalize_b1_items(items, scope_label)
@@ -599,10 +736,103 @@ def _run_b1(contract_text: str, attachments: list[dict], parties: list[dict], me
     return items
 
 
+def _compact_b4_text(value: str | None) -> str:
+    return "".join(str(value or "").split()).replace(",", "").replace("，", "")
+
+
+def _format_b4_amount(value) -> str | None:
+    text = str(value or "").strip().replace(",", "").replace("，", "")
+    if not text:
+        return None
+    try:
+        return format(Decimal(text).normalize(), "f")
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def _build_b4_amount_baseline(a3: dict, contract_text: str) -> dict | None:
+    amount = _format_b4_amount(a3.get("total_amount_numeric"))
+    evidence = str(a3.get("total_amount_evidence") or "").strip()
+    compact_evidence = _compact_b4_text(evidence)
+    if not amount or not compact_evidence:
+        return None
+    if compact_evidence not in _compact_b4_text(contract_text) or amount not in compact_evidence:
+        return None
+    return {"total_amount_numeric": amount, "total_amount_evidence": evidence}
+
+
+def _build_verified_b4_amount_item(observation: dict, scope_label: str, attachment_text: str, amount_baseline: dict | None) -> CheckItem | None:
+    if amount_baseline is None:
+        return None
+    attachment_amount = _format_b4_amount(observation.get("attachment_value"))
+    attachment_evidence = str(observation.get("attachment_evidence") or "").strip()
+    compact_evidence = _compact_b4_text(attachment_evidence)
+    baseline_amount = str(amount_baseline["total_amount_numeric"])
+    if not attachment_amount or not compact_evidence:
+        return None
+    if compact_evidence not in _compact_b4_text(attachment_text) or attachment_amount not in compact_evidence:
+        return None
+    if attachment_amount == baseline_amount:
+        return None
+    reason = (
+        f"{scope_label}中：附件总价“{attachment_amount}”与合同正文总价“{baseline_amount}”不一致。"
+        f"正文证据“{amount_baseline['total_amount_evidence']}”。"
+        f"附件证据“{attachment_evidence}”。"
+    )
+    return CheckItem(
+        id="B-4",
+        name=f"附件内容一致性-{scope_label}",
+        result="FAIL",
+        block_level="硬阻断",
+        reason=reason,
+    )
+
+
+_B4_AMOUNT_HINTS = ("金额", "总价", "价款", "含税")
+
+
+def _is_b4_amount_claim(observation: dict) -> bool:
+    if observation.get("check_type") == "total_amount":
+        return True
+    return any(hint in str(observation.get("reason") or "") for hint in _B4_AMOUNT_HINTS)
+
+
+def _finalize_b4_items(payload: dict, scope_label: str, attachment_text: str, baseline: dict) -> list[CheckItem]:
+    raw_checks = payload.get("checks", [])
+    if not isinstance(raw_checks, list):
+        raise ModelFormatError("B-4模型输出checks不是数组")
+    amount_baseline = baseline.get("amount_payment")
+    items: list[CheckItem] = []
+    item_name = f"附件内容一致性-{scope_label}"
+    for raw in raw_checks:
+        if not isinstance(raw, dict):
+            raise ModelFormatError("B-4模型输出checks元素不是对象")
+        if _is_b4_amount_claim(raw):
+            item = _build_verified_b4_amount_item(raw, scope_label, attachment_text, amount_baseline)
+            if item is not None:
+                items.append(item)
+            continue
+        parsed = _parse_model_checks({"checks": [raw]}, "B-4", item_name, prompt_name="b4_attachment_content")
+        items.extend(parsed)
+    if not items:
+        items.append(CheckItem(id="B-4", name=item_name, result="PASS", block_level="通过", reason=None))
+    return [
+        CheckItem(
+            id=item.id,
+            name=item.name,
+            result=item.result,
+            block_level=RESULT_TO_BLOCK_LEVEL.get(item.result, "不适用"),
+            reason=item.reason,
+        )
+        for item in items
+    ]
+
+
 def _run_b4(resolved_attachments: list[dict], baseline: dict, metrics: list[CheckMetric] | None = None) -> list[CheckItem]:
     items: list[CheckItem] = []
     for attachment in resolved_attachments:
         scope_label = _attachment_scope_label(attachment)
+        attachment_text = attachment.get("text", "")
         payload = _invoke_json_prompt(
             "b4_attachment_content",
             required_keys=["checks"],
@@ -611,14 +841,9 @@ def _run_b4(resolved_attachments: list[dict], baseline: dict, metrics: list[Chec
             metric_id=f"B-4-{scope_label}",
             metric_name=f"附件内容一致性-{scope_label}",
             baseline=baseline,
-            attachment_text=attachment.get("text", ""),
+            attachment_text=attachment_text,
         )
-        items.extend(_parse_model_checks(
-            payload,
-            "B-4",
-            f"附件内容一致性-{attachment.get('title') or attachment.get('index')}",
-            prompt_name="b4_attachment_content",
-        ))
+        items.extend(_finalize_b4_items(payload, scope_label, attachment_text, baseline))
     if not resolved_attachments:
         items.append(CheckItem(id="B-4", name="附件内容一致性", result="NA", block_level="不适用", reason="无可检查附件"))
     return items
@@ -708,11 +933,15 @@ def run_review_pipeline(request: ContractReviewRequest) -> PipelineResult:
 
     b1_parties = [party.model_dump() for party in header.parties]
     items.extend(_run_b1(prepared["full_text"], attachment_result["resolved_attachments"], b1_parties, metrics))
-    items.extend(_run_b4(attachment_result["resolved_attachments"], {
+    b4_baseline = {
         "header": header.model_dump(),
         "signature": signature.model_dump(),
         "preset": preset.model_dump() if preset is not None else None,
-    }, metrics))
+    }
+    amount_baseline = _build_b4_amount_baseline(a3, prepared["full_text"])
+    if amount_baseline is not None:
+        b4_baseline["amount_payment"] = amount_baseline
+    items.extend(_run_b4(attachment_result["resolved_attachments"], b4_baseline, metrics))
     return PipelineResult(items=items, metrics=metrics)
 
 

@@ -9,6 +9,8 @@ a1a_party_extraction:
     header中必须包含project_number；若首页出现“项目编号/项目号/招标编号/采购编号”，填入project_number。
     contract_number只提取“合同编号/合同号/协议编号”等合同自身编号；项目编号不能填入contract_number。
     若“合同编号”标签存在但后面为空，contract_number必须为null，不能用项目编号代替。
+    header.parties只提取合同首部中被明确标注为甲方、乙方或其他签约方的主体；合同名称、项目名称、项目背景和历史项目中出现的公司名称不得填入parties。
+    每个party必须包含aliases，仅填写与该主体定义同时明确声明的简称；“甲方”“乙方”等角色本身不填入aliases，未声明简称时返回空数组。
     JSON结构示例：
     {{
       "header": {{
@@ -18,7 +20,7 @@ a1a_party_extraction:
         "contract_number": null,
         "signing_location": null,
         "signing_date": null,
-        "parties": [{{"role": "甲方", "name": "客户公司"}}]
+        "parties": [{{"role": "甲方", "name": "客户公司", "aliases": []}}]
       }},
       "signature_parties": [{{"role": "乙方", "name": "我方公司"}}],
       "sections": [{{"title": "附件一", "content": "附件正文内容"}}]
@@ -63,12 +65,14 @@ a3_amount_payment:
       "currency": "人民币",
       "payment_method": "电汇",
       "total_amount_numeric": "100",
+      "total_amount_evidence": "本合同最终含税总价为100元（大写：壹佰元整）。",
       "total_amount_uppercase": "壹佰元整",
       "total_amount_match": true,
       "payment_stages": [
         {{"stage_name": "首付款", "percentage": "50", "amount_numeric": "50", "amount_uppercase": "伍拾元整"}}
       ]
     }}
+    `总价`存在时，total_amount_evidence 必须摘录合同正文中同时包含该数值的完整短句；无法找到时返回 null。
     【合同全文】
     {full_text}
 
@@ -96,21 +100,22 @@ b1_appellation:
     你是一个合同审查助手。检查各签约方称谓是否全文统一。
     【重要】只输出纯JSON，不要任何解释文字、不要markdown代码块，直接输出JSON对象。
   user: |
-    你只检查“签约主体称谓是否一致”，不要输出任何与称谓无关的问题（如“本合同/本协议”措辞建议、行文风格建议）。
-    每条check必须聚焦一个主体的一类称谓不一致，禁止重复输出语义相同的结论。
-    若“发现称谓”属于“本合同/本协议/本项目/双方/本条/上述”等泛化指代词，不得输出WARN/FAIL。
-    每条reason必须是自然语言一句话，以“{scope_label}中：”开头，长度不超过160字。
-    禁止使用“【基准称谓】/【发现称谓】/【证据】”标签式写法。
-
-    发现不一致时，reason必须说明：
-    1. 涉及哪一方或哪个主体；
-    2. 发现的称谓与基准称谓；
-    3. 最强证据（一个位置即可）。
-    禁止只输出“称谓存在不一致”“存在称谓不一致”“称谓不统一”等泛化描述。
+    你只检查“签约主体称谓是否一致”。首页明确的签约方基准及其明确简称是唯一合法称谓集合。
+    合同名称、项目名称、项目编号、背景或历史项目引用中出现的公司名称不是签约方称谓证据，不得输出WARN/FAIL。
+    当前文本仅代表“{scope_label}”；不得引用合同正文、其他附件或任何当前文本之外的内容作为证据。
+    对附件：若出现“甲方”或“乙方”等角色但未在附件内明确写出该角色对应的主体，必须输出WARN，evidence_type为role_without_definition；不得因为首页已有定义而直接通过。
+    若附件内明确写出“甲方：某主体”“乙方：某主体”或等价定义，必须与签约方基准中同角色的法定全称或明确简称比对；不一致时输出WARN，evidence_type为party_definition。
+    每个WARN/FAIL必须返回一条结构化观察，所有字段必须存在：
+    - role：首页签约方角色；
+    - baseline_appellation：该角色的首页法定全称；
+    - found_appellation：当前文本中发现的未声明称谓；
+    - evidence_quote：只摘录当前文本内能证明称谓使用的完整短句；
+    - evidence_type：普通签约方称谓使用 party_appellation，附件内角色主体定义使用 party_definition，附件内角色未定义主体使用 role_without_definition。合同或项目名称使用 contract_or_project_name，背景或历史项目引用使用 background_reference，无法判断使用 unknown。
+    evidence_type 为 party_appellation 或 party_definition 时，仅发现称谓不属于首页法定全称或明确简称才输出WARN/FAIL；evidence_type 为 role_without_definition 时，附件内出现该角色即输出WARN；其他情况返回空checks。
     JSON结构示例：
     {{
       "checks": [
-        {{"result": "WARN", "block_level": "提示", "reason": "{scope_label}中：乙方称谓疑似不一致，发现“卖方”，基准为“供应商（乙方）”。证据：正文第3条出现“卖方”，请业务确认是否同一主体。"}}
+        {{"result": "WARN", "block_level": "提示", "role": "乙方", "baseline_appellation": "供应商", "found_appellation": "卖方", "evidence_quote": "卖方应于第3条约定期限内交付。", "evidence_type": "party_appellation"}}
       ]
     }}
     【签约方基准】
@@ -119,16 +124,18 @@ b1_appellation:
     {scope_label}
     【当前文本】
     {segment_text}
-
 b4_attachment_content:
   system: |
     你是一个合同审查助手。检查附件内容与合同正文关键信息是否一致。
     【重要】只输出纯JSON，不要任何解释文字、不要markdown代码块，直接输出JSON对象。
   user: |
+    若检查附件总价，只有在【比对基准】的 amount_payment 同时给出 total_amount_numeric 和 total_amount_evidence 时才可输出该问题；不得自行推断合同正文金额。
+    总价不一致时，check_type 必须为 total_amount，attachment_value 为附件总价数值，attachment_evidence 为当前附件内同时包含该数值的完整短句，reason 为 null。
+    非金额问题使用 check_type=other，attachment_value 和 attachment_evidence 为 null，reason 说明问题；无问题返回空 checks。
     JSON结构示例：
     {{
       "checks": [
-        {{"result": "FAIL", "block_level": "硬阻断", "reason": "附件金额与合同正文金额不一致"}}
+        {{"result": "FAIL", "block_level": "硬阻断", "check_type": "total_amount", "attachment_value": "3286000", "attachment_evidence": "附件含税总价为3286000元。", "reason": null}}
       ]
     }}
     【比对基准】

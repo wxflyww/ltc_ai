@@ -1,5 +1,6 @@
 from unittest.mock import patch
 
+from app.capabilities.contract_review.response_formats import RESPONSE_FORMATS
 from app.capabilities.contract_review.schemas import AttachmentInput, ContractReviewRequest, SystemPreset
 from app.capabilities.contract_review.service import (
     _log_llm_trace,
@@ -7,6 +8,7 @@ from app.capabilities.contract_review.service import (
     _parse_model_checks,
     _preprocess_request,
     _run_b1,
+    _run_b4,
     review_contract,
     run_review_pipeline,
 )
@@ -681,3 +683,256 @@ def test_invoke_json_prompt_logs_metadata_output_length(monkeypatch, caplog):
     payloads = [record.__dict__.get("payload", {}) for record in caplog.records if record.name == "contract_review"]
     invoke_error = next(payload for payload in payloads if payload.get("event") == "invoke_json_prompt_invoke_error")
     assert invoke_error.get("length_issue") == "output"
+
+
+def test_b1_response_schema_requires_structured_evidence_observation():
+    properties = RESPONSE_FORMATS["b1_appellation"]["json_schema"]["schema"]["properties"]["checks"]["items"]["properties"]
+
+    assert {"role", "baseline_appellation", "found_appellation", "evidence_quote", "evidence_type"} <= set(properties)
+
+
+def test_run_b1_warns_when_attachment_uses_party_role_without_definition():
+    outputs = [
+        '{"checks":[]}',
+        '{"checks":[{"result":"WARN","block_level":"提示","role":"乙方","baseline_appellation":"中国移动通信集团北京有限公司","found_appellation":null,"evidence_quote":"乙方应按约定提供价格清单。","evidence_type":"role_without_definition"}]}',
+    ]
+
+    def fake_invoke(model, messages, response_format=None):
+        return outputs.pop(0), {"total_tokens": 1}
+
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
+            items = _run_b1(
+                "合同正文",
+                [{"title": "附件1", "text": "乙方应按约定提供价格清单。"}],
+                [{"role": "乙方", "name": "中国移动通信集团北京有限公司", "aliases": []}],
+            )
+
+    attachment_item = next(item for item in items if item.name == "称谓一致性-附件1")
+    assert attachment_item.result == "WARN"
+    assert "未明确对应主体" in (attachment_item.reason or "")
+
+
+def test_run_b1_generates_warn_from_verified_structured_observation():
+    outputs = [
+        '{"checks":[{"result":"WARN","block_level":"提示","role":"乙方","baseline_appellation":"供应商","found_appellation":"卖方","evidence_quote":"卖方应在十日内交付。","evidence_type":"party_appellation"}]}',
+    ]
+
+    def fake_invoke(model, messages, response_format=None):
+        return outputs.pop(0), {"total_tokens": 1}
+
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
+            items = _run_b1(
+                "卖方应在十日内交付。",
+                [],
+                [{"role": "乙方", "name": "供应商", "aliases": []}],
+            )
+
+    assert items[0].result == "WARN"
+    assert "发现“卖方”" in (items[0].reason or "")
+    assert "证据“卖方应在十日内交付。”" in (items[0].reason or "")
+
+
+
+def test_run_b1_ignores_contract_name_observation():
+    outputs = [
+        '{"checks":[{"result":"WARN","block_level":"提示","role":"甲方","baseline_appellation":"中国移动通信集团北京有限公司","found_appellation":"中国移动北京公司","evidence_quote":"合同名称：中国移动北京公司2024年项目合同","evidence_type":"contract_or_project_name"}]}',
+    ]
+
+    def fake_invoke(model, messages, response_format=None):
+        return outputs.pop(0), {"total_tokens": 1}
+
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
+            items = _run_b1(
+                "合同名称：中国移动北京公司2024年项目合同",
+                [],
+                [{"role": "甲方", "name": "中国移动通信集团北京有限公司", "aliases": []}],
+            )
+
+    assert items[0].result == "PASS"
+
+
+def test_run_b1_ignores_cross_scope_evidence():
+    outputs = [
+        '{"checks":[{"result":"WARN","block_level":"提示","role":"甲方","baseline_appellation":"中国移动通信集团北京有限公司","found_appellation":"中国移动北京公司","evidence_quote":"合同名称：中国移动北京公司2024年项目合同","evidence_type":"party_appellation"}]}',
+    ]
+
+    def fake_invoke(model, messages, response_format=None):
+        return outputs.pop(0), {"total_tokens": 1}
+
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
+            items = _run_b1(
+                "鉴于条款仅引用既有项目。",
+                [],
+                [{"role": "甲方", "name": "中国移动通信集团北京有限公司", "aliases": []}],
+            )
+
+    assert items[0].result == "PASS"
+
+
+def test_run_b1_accepts_alias_declared_in_header_party():
+    outputs = [
+        '{"checks":[{"result":"WARN","block_level":"提示","role":"甲方","baseline_appellation":"中国移动通信集团北京有限公司","found_appellation":"北京移动","evidence_quote":"北京移动应在验收后付款。","evidence_type":"party_appellation"}]}',
+    ]
+
+    def fake_invoke(model, messages, response_format=None):
+        return outputs.pop(0), {"total_tokens": 1}
+
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
+            items = _run_b1(
+                "北京移动应在验收后付款。",
+                [],
+                [{"role": "甲方", "name": "中国移动通信集团北京有限公司", "aliases": ["北京移动"]}],
+            )
+
+    assert items[0].result == "PASS"
+
+
+def test_b4_response_schema_keeps_reason_check_item():
+    properties = RESPONSE_FORMATS["b4_attachment_content"]["json_schema"]["schema"]["properties"]["checks"]["items"]["properties"]
+
+    assert "reason" in properties
+    assert "evidence_type" not in properties
+
+
+def test_b1_response_schema_supports_attachment_definition_evidence_types():
+    evidence_type = RESPONSE_FORMATS["b1_appellation"]["json_schema"]["schema"]["properties"]["checks"]["items"]["properties"]["evidence_type"]
+
+    assert {"party_definition", "role_without_definition"} <= set(evidence_type["enum"])
+
+
+def test_run_b1_warns_when_attachment_party_definition_differs_from_contract():
+    outputs = [
+        '{"checks":[]}',
+        '{"checks":[{"result":"WARN","block_level":"提示","role":"乙方","baseline_appellation":"中国移动通信集团北京有限公司","found_appellation":"中国移动北京公司","evidence_quote":"乙方：中国移动北京公司","evidence_type":"party_definition"}]}',
+    ]
+
+    def fake_invoke(model, messages, response_format=None):
+        return outputs.pop(0), {"total_tokens": 1}
+
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
+            items = _run_b1(
+                "合同正文",
+                [{"title": "附件1", "text": "乙方：中国移动北京公司"}],
+                [{"role": "乙方", "name": "中国移动通信集团北京有限公司", "aliases": []}],
+            )
+
+    attachment_item = next(item for item in items if item.name == "称谓一致性-附件1")
+    assert attachment_item.result == "WARN"
+    assert "发现“中国移动北京公司”" in (attachment_item.reason or "")
+
+
+def test_run_b1_passes_when_attachment_party_definition_matches_declared_alias():
+    outputs = [
+        '{"checks":[]}',
+        '{"checks":[{"result":"WARN","block_level":"提示","role":"乙方","baseline_appellation":"中国移动通信集团北京有限公司","found_appellation":"北京移动","evidence_quote":"乙方：北京移动","evidence_type":"party_definition"}]}',
+    ]
+
+    def fake_invoke(model, messages, response_format=None):
+        return outputs.pop(0), {"total_tokens": 1}
+
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
+            items = _run_b1(
+                "合同正文",
+                [{"title": "附件1", "text": "乙方：北京移动"}],
+                [{"role": "乙方", "name": "中国移动通信集团北京有限公司", "aliases": ["北京移动"]}],
+            )
+
+    attachment_item = next(item for item in items if item.name == "称谓一致性-附件1")
+    assert attachment_item.result == "PASS"
+
+
+def test_run_b1_legacy_pass_without_reason_keeps_reason_none():
+    outputs = [
+        '{"checks":[{"result":"PASS","block_level":"通过","reason":null}]}',
+    ]
+
+    def fake_invoke(model, messages, response_format=None):
+        return outputs.pop(0), {"total_tokens": 1}
+
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
+            items = _run_b1("合同正文", [], [])
+
+    assert items[0].result == "PASS"
+    assert items[0].reason is None
+
+def test_a3_and_b4_response_schemas_require_amount_evidence():
+    a3_properties = RESPONSE_FORMATS["a3_amount_payment"]["json_schema"]["schema"]["properties"]
+    b4_item_properties = RESPONSE_FORMATS["b4_attachment_content"]["json_schema"]["schema"]["properties"]["checks"]["items"]["properties"]
+
+    assert "total_amount_evidence" in a3_properties
+    assert {"check_type", "attachment_value", "attachment_evidence"} <= set(b4_item_properties)
+
+
+def test_b4_amount_mismatch_uses_verified_contract_and_attachment_evidence():
+    outputs = [
+        '{"checks":[{"result":"FAIL","block_level":"提示","check_type":"total_amount","attachment_value":3286000,"attachment_evidence":"附件含税总价为3286000元。","reason":null}]}'
+    ]
+
+    def fake_invoke(model, messages, response_format=None):
+        return outputs.pop(0), {"total_tokens": 1}
+
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
+            items = _run_b4(
+                [{"title": "附件1", "text": "附件含税总价为3286000元。"}],
+                {"amount_payment": {"total_amount_numeric": 3350130, "total_amount_evidence": "本合同最终含税总价为3350130元。"}},
+            )
+
+    item = items[0]
+    assert item.result == "FAIL"
+    assert item.block_level == "硬阻断"
+    assert "合同正文总价“3350130”" in (item.reason or "")
+    assert "正文证据“本合同最终含税总价为3350130元。”" in (item.reason or "")
+    assert "附件证据“附件含税总价为3286000元。”" in (item.reason or "")
+
+
+def test_b4_ignores_amount_mismatch_without_current_attachment_evidence():
+    outputs = [
+        '{"checks":[{"result":"FAIL","block_level":"硬阻断","check_type":"total_amount","attachment_value":3286000,"attachment_evidence":"其他附件含税总价为3286000元。","reason":null}]}'
+    ]
+
+    def fake_invoke(model, messages, response_format=None):
+        return outputs.pop(0), {"total_tokens": 1}
+
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
+            items = _run_b4(
+                [{"title": "附件1", "text": "附件含税总价为3286000元。"}],
+                {"amount_payment": {"total_amount_numeric": 3350130, "total_amount_evidence": "本合同最终含税总价为3350130元。"}},
+            )
+
+    assert items[0].result == "PASS"
+
+
+def test_b4_normalizes_pass_block_level_from_result():
+    outputs = ['{"checks":[{"result":"PASS","block_level":"硬阻断","check_type":"other","attachment_value":null,"attachment_evidence":null,"reason":"附件内容一致"}]}']
+
+    def fake_invoke(model, messages, response_format=None):
+        return outputs.pop(0), {"total_tokens": 1}
+
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
+            items = _run_b4([{"title": "附件3", "text": "保密条款"}], {})
+
+    assert items[0].result == "PASS"
+    assert items[0].block_level == "通过"
+
+def test_b4_ignores_unstructured_amount_claim_without_evidence():
+    outputs = ['{"checks":[{"result":"FAIL","block_level":"硬阻断","reason":"附件含税总价与合同正文金额不一致"}]}']
+
+    def fake_invoke(model, messages, response_format=None):
+        return outputs.pop(0), {"total_tokens": 1}
+
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
+            items = _run_b4([{"title": "附件1", "text": "附件价格清单"}], {})
+
+    assert items[0].result == "PASS"

@@ -52,6 +52,7 @@ class ContractReviewData(BaseModel):
 class ContractParty(BaseModel):
     role: str | None = None
     name: str | None = None
+    aliases: list[str] = Field(default_factory=list)
 
 
 class HeaderInfo(BaseModel):
