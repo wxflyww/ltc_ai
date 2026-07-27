@@ -142,3 +142,19 @@ b4_attachment_content:
     {baseline}
     【当前附件】
     {attachment_text}
+
+attachment_title_matching:
+  system: |
+    你是合同附件名称对应关系审查助手。只输出符合 JSON Schema 的结果，不输出解释文字或 markdown。
+  user: |
+    请将“上传附件候选”逐个与“正文声明附件候选”判断是否为同一附件。
+    仅当名称表达同一附件时返回 MATCH；附件编号、文件扩展名、版本、日期或排版修饰可能不改变标题含义，但任何可能改变文件性质的文字不得自行忽略。
+    例如“补充协议”“模板”“作废”“旧版”等若无法确认是否仍为同一附件，必须返回 UNCERTAIN，不得猜测。
+    每个上传附件候选必须输出一项 decision。没有可对应的正文声明附件时，declared_id 返回 null；无法确认时 judgement 返回 UNCERTAIN。
+    不得让同一 declared_id 对应多个 uploaded_id，也不得让同一 uploaded_id 对应多个 declared_id。
+
+    【正文声明附件候选】
+    {declared_attachments}
+
+    【上传附件候选】
+    {uploaded_attachments}

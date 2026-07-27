@@ -162,6 +162,24 @@ RESPONSE_FORMATS: dict[str, dict[str, Any]] = {
             }),
         },
     },
+    "attachment_title_matching": {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "contract_review_attachment_title_matching",
+            "strict": True,
+            "schema": _object({
+                "decisions": {
+                    "type": "array",
+                    "items": _object({
+                        "uploaded_id": {"type": "string"},
+                        "declared_id": _nullable_string(),
+                        "judgement": {"type": "string", "enum": ["MATCH", "MISMATCH", "UNCERTAIN"]},
+                        "reason": _nullable_string(),
+                    }),
+                },
+            }),
+        },
+    },
     "b1_appellation": {
         "type": "json_schema",
         "json_schema": {

@@ -936,3 +936,178 @@ def test_b4_ignores_unstructured_amount_claim_without_evidence():
             items = _run_b4([{"title": "附件1", "text": "附件价格清单"}], {})
 
     assert items[0].result == "PASS"
+
+
+def test_run_review_pipeline_uses_attachment_title_matching_for_unresolved_filename():
+    request = ContractReviewRequest(
+        contract_md="# 合同\n甲方：客户公司\n乙方：我方公司",
+        attachments=[AttachmentInput(index=1, filename="附件1：价格明细表2.11.md", text="附件内容")],
+    )
+    prompts = []
+    responses = {
+        "a1a_party_extraction": {
+            "header": {
+                "contract_name": "测试合同",
+                "project_name": None,
+                "project_number": None,
+                "contract_number": "HT-1",
+                "signing_location": "沈阳",
+                "signing_date": "2026年7月8日",
+                "parties": [{"role": "甲方", "name": "客户公司"}, {"role": "乙方", "name": "我方公司"}],
+            },
+            "signature_parties": [],
+            "sections": [],
+        },
+        "a3_amount_payment": {
+            "currency": "人民币",
+            "payment_method": "电汇",
+            "total_amount_numeric": "100",
+            "total_amount_uppercase": "壹佰元整",
+            "total_amount_match": True,
+            "payment_stages": [],
+        },
+        "a4_copies_attachments": {
+            "copies": {"total_copies": 2, "party_copies": []},
+            "attachments_declared": [
+                {"index": 1, "title": "价格明细表", "content_embedded_in_contract": False, "section_heading_hint": None}
+            ],
+            "total_declared": 1,
+        },
+        "attachment_title_matching": {
+            "decisions": [
+                {
+                    "uploaded_id": "uploaded-0",
+                    "declared_id": "declared-0",
+                    "judgement": "MATCH",
+                    "reason": "文件名中的版本号不改变附件标题含义",
+                }
+            ]
+        },
+    }
+
+    def fake_prompt(prompt_name, **kwargs):
+        prompts.append((prompt_name, kwargs))
+        return responses[prompt_name]
+
+    with patch("app.capabilities.contract_review.service._invoke_json_prompt", side_effect=fake_prompt):
+        with patch("app.capabilities.contract_review.service.identify_our_party", return_value=(None, None)):
+            with patch("app.capabilities.contract_review.service._run_b1", return_value=[]):
+                with patch("app.capabilities.contract_review.service._run_b4", return_value=[]):
+                    result = run_review_pipeline(request)
+
+    attachment_item = next(item for item in result.items if item.id == "附件检查-数量标题")
+    assert attachment_item.result == "PASS"
+    matching_call = next(kwargs for name, kwargs in prompts if name == "attachment_title_matching")
+    assert "价格明细表" in matching_call["declared_attachments"]
+    assert "价格明细表2.11" in matching_call["uploaded_attachments"]
+
+
+def test_run_review_pipeline_keeps_warn_when_attachment_title_matching_is_uncertain():
+    request = ContractReviewRequest(
+        contract_md="# 合同\n甲方：客户公司\n乙方：我方公司",
+        attachments=[AttachmentInput(index=1, filename="附件1：技术协议补充协议.md", text="附件内容")],
+    )
+    responses = {
+        "a1a_party_extraction": {
+            "header": {
+                "contract_name": "测试合同",
+                "project_name": None,
+                "project_number": None,
+                "contract_number": "HT-1",
+                "signing_location": "沈阳",
+                "signing_date": "2026年7月8日",
+                "parties": [{"role": "甲方", "name": "客户公司"}, {"role": "乙方", "name": "我方公司"}],
+            },
+            "signature_parties": [],
+            "sections": [],
+        },
+        "a3_amount_payment": {
+            "currency": "人民币",
+            "payment_method": "电汇",
+            "total_amount_numeric": "100",
+            "total_amount_uppercase": "壹佰元整",
+            "total_amount_match": True,
+            "payment_stages": [],
+        },
+        "a4_copies_attachments": {
+            "copies": {"total_copies": 2, "party_copies": []},
+            "attachments_declared": [
+                {"index": 1, "title": "技术协议", "content_embedded_in_contract": False, "section_heading_hint": None}
+            ],
+            "total_declared": 1,
+        },
+        "attachment_title_matching": {
+            "decisions": [
+                {
+                    "uploaded_id": "uploaded-0",
+                    "declared_id": "declared-0",
+                    "judgement": "UNCERTAIN",
+                    "reason": "无法仅根据名称确认是否为补充协议",
+                }
+            ]
+        },
+    }
+
+    def fake_prompt(prompt_name, **kwargs):
+        return responses[prompt_name]
+
+    with patch("app.capabilities.contract_review.service._invoke_json_prompt", side_effect=fake_prompt):
+        with patch("app.capabilities.contract_review.service.identify_our_party", return_value=(None, None)):
+            with patch("app.capabilities.contract_review.service._run_b1", return_value=[]):
+                with patch("app.capabilities.contract_review.service._run_b4", return_value=[]):
+                    result = run_review_pipeline(request)
+
+    attachment_item = next(item for item in result.items if item.id == "附件检查-数量标题")
+    assert attachment_item.result == "WARN"
+    assert "业务确认" in (attachment_item.reason or "")
+
+def test_run_review_pipeline_skips_attachment_title_matching_for_normalized_exact_title():
+    request = ContractReviewRequest(
+        contract_md="# 合同\n甲方：客户公司\n乙方：我方公司",
+        attachments=[AttachmentInput(index=1, filename="附件1：价格明细表.md", text="附件内容")],
+    )
+    prompts = []
+    responses = {
+        "a1a_party_extraction": {
+            "header": {
+                "contract_name": "测试合同",
+                "project_name": None,
+                "project_number": None,
+                "contract_number": "HT-1",
+                "signing_location": "沈阳",
+                "signing_date": "2026年7月8日",
+                "parties": [{"role": "甲方", "name": "客户公司"}, {"role": "乙方", "name": "我方公司"}],
+            },
+            "signature_parties": [],
+            "sections": [],
+        },
+        "a3_amount_payment": {
+            "currency": "人民币",
+            "payment_method": "电汇",
+            "total_amount_numeric": "100",
+            "total_amount_uppercase": "壹佰元整",
+            "total_amount_match": True,
+            "payment_stages": [],
+        },
+        "a4_copies_attachments": {
+            "copies": {"total_copies": 2, "party_copies": []},
+            "attachments_declared": [
+                {"index": 1, "title": "价格明细表", "content_embedded_in_contract": False, "section_heading_hint": None}
+            ],
+            "total_declared": 1,
+        },
+    }
+
+    def fake_prompt(prompt_name, **kwargs):
+        prompts.append(prompt_name)
+        return responses[prompt_name]
+
+    with patch("app.capabilities.contract_review.service._invoke_json_prompt", side_effect=fake_prompt):
+        with patch("app.capabilities.contract_review.service.identify_our_party", return_value=(None, None)):
+            with patch("app.capabilities.contract_review.service._run_b1", return_value=[]):
+                with patch("app.capabilities.contract_review.service._run_b4", return_value=[]):
+                    result = run_review_pipeline(request)
+
+    attachment_item = next(item for item in result.items if item.id == "附件检查-数量标题")
+    assert attachment_item.result == "PASS"
+    assert "attachment_title_matching" not in prompts

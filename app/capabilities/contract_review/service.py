@@ -1,3 +1,4 @@
+import json
 import time
 from decimal import Decimal, InvalidOperation
 from dataclasses import dataclass
@@ -6,7 +7,11 @@ from datetime import datetime
 from langchain_core.messages import HumanMessage
 from pydantic import ValidationError
 
-from app.capabilities.contract_review.attachments import check_copies_and_attachments
+from app.capabilities.contract_review.attachments import (
+    build_attachment_title_match_plan,
+    check_copies_and_attachments,
+    validate_attachment_title_matches,
+)
 from app.capabilities.contract_review.checks import (
     build_review_data,
     check_amount_payment,
@@ -923,11 +928,26 @@ def run_review_pipeline(request: ContractReviewRequest) -> PipelineResult:
         full_text=prepared["full_text"],
     )
     _require_keys(a4, ["copies", "attachments_declared"], "A-4")
+    title_match_plan = build_attachment_title_match_plan(a4["attachments_declared"], prepared["attachments"])
+    semantic_matches: list[dict] = []
+    if title_match_plan["unresolved_declared"] and title_match_plan["unresolved_uploaded"]:
+        title_matching = _invoke_json_prompt(
+            "attachment_title_matching",
+            required_keys=["decisions"],
+            validation_label="A-4-附件标题匹配",
+            metrics=metrics,
+            metric_id="A-4-附件标题匹配",
+            metric_name="附件数量/标题语义匹配",
+            declared_attachments=json.dumps(title_match_plan["unresolved_declared"], ensure_ascii=False),
+            uploaded_attachments=json.dumps(title_match_plan["unresolved_uploaded"], ensure_ascii=False),
+        )
+        semantic_matches = validate_attachment_title_matches(title_matching["decisions"], title_match_plan)
     attachment_result = check_copies_and_attachments(
         a4,
         a1a.get("sections", []),
         prepared["attachments"],
         prepared["full_text"],
+        semantic_matches=semantic_matches,
     )
     items.extend(attachment_result["check_results"])
 

@@ -2,6 +2,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 import pytest
 
 from app.capabilities.contract_review.prompts import build_prompt, parse_json_object
+from app.capabilities.contract_review.response_formats import get_response_format
 from app.core.errors import ModelFormatError
 
 
@@ -53,3 +54,18 @@ def test_a3_prompt_includes_total_amount_and_evidence_example():
 
     assert '"total_amount_numeric": "100"' in content
     assert '"total_amount_evidence": "本合同最终含税总价为100元（大写：壹佰元整）。"' in content
+
+
+def test_attachment_title_matching_prompt_and_schema_use_three_state_decision():
+    messages = build_prompt(
+        "attachment_title_matching",
+        declared_attachments='[{"id":"declared-0","title":"价格明细表"}]',
+        uploaded_attachments='[{"id":"uploaded-0","filename":"价格明细表2.11.md"}]',
+    )
+    content = messages[1].content
+    schema = get_response_format("attachment_title_matching")["json_schema"]["schema"]
+    decision = schema["properties"]["decisions"]["items"]
+
+    assert "UNCERTAIN" in content
+    assert "价格明细表2.11.md" in content
+    assert decision["properties"]["judgement"]["enum"] == ["MATCH", "MISMATCH", "UNCERTAIN"]

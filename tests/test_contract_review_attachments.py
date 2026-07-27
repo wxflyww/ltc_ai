@@ -1,4 +1,8 @@
-from app.capabilities.contract_review.attachments import check_copies_and_attachments
+from app.capabilities.contract_review.attachments import (
+    build_attachment_title_match_plan,
+    check_copies_and_attachments,
+    validate_attachment_title_matches,
+)
 
 
 def test_declared_three_but_actual_two_fails():
@@ -58,3 +62,72 @@ def test_party_copies_sum_mismatch_fails_seq12():
     )
     assert result["check_results"][0].id == "序号12"
     assert result["check_results"][0].result == "FAIL"
+
+
+def test_build_attachment_title_match_plan_matches_unique_normalized_filename():
+    plan = build_attachment_title_match_plan(
+        [{"index": 1, "title": "价格明细表", "content_embedded_in_contract": False}],
+        [{"index": 1, "filename": "附件1：价格明细表.md", "text": ""}],
+    )
+
+    assert plan["matches"] == [{"declared_id": "declared-0", "uploaded_id": "uploaded-0"}]
+    assert plan["unresolved_declared"] == []
+    assert plan["unresolved_uploaded"] == []
+
+
+def test_validate_attachment_title_matches_rejects_duplicate_uploaded_candidate():
+    plan = build_attachment_title_match_plan(
+        [
+            {"index": 1, "title": "价格明细表", "content_embedded_in_contract": False},
+            {"index": 2, "title": "价格清单", "content_embedded_in_contract": False},
+        ],
+        [{"index": 1, "filename": "附件1：价格明细表2.11.md", "text": ""}],
+    )
+
+    matches = validate_attachment_title_matches(
+        [
+            {"declared_id": "declared-0", "uploaded_id": "uploaded-0", "judgement": "MATCH"},
+            {"declared_id": "declared-1", "uploaded_id": "uploaded-0", "judgement": "MATCH"},
+        ],
+        plan,
+    )
+
+    assert matches == []
+
+
+def test_build_attachment_title_match_plan_preserves_version_in_declared_title():
+    plan = build_attachment_title_match_plan(
+        [{"index": 1, "title": "价格明细表2.11", "content_embedded_in_contract": False}],
+        [{"index": 1, "filename": "附件1：价格明细表2.11.md", "text": ""}],
+    )
+
+    assert plan["matches"] == [{"declared_id": "declared-0", "uploaded_id": "uploaded-0"}]
+
+
+def test_build_attachment_title_match_plan_keeps_attachment_number_as_complete_title():
+    plan = build_attachment_title_match_plan(
+        [{"index": 1, "title": "附件一", "content_embedded_in_contract": False}],
+        [{"index": 1, "filename": "附件一.xlsx", "text": ""}],
+    )
+
+    assert plan["matches"] == [{"declared_id": "declared-0", "uploaded_id": "uploaded-0"}]
+
+
+def test_unmatched_attachment_warns_when_declared_total_is_missing():
+    result = check_copies_and_attachments(
+        a4_result={
+            "copies": {"total_copies": 2, "party_copies": []},
+            "attachments_declared": [
+                {"index": 1, "title": "技术协议", "content_embedded_in_contract": False, "section_heading_hint": None}
+            ],
+            "total_declared": None,
+        },
+        sections=[],
+        attachments=[{"index": 1, "filename": "保密协议.md", "text": "附件内容"}],
+        full_text="",
+    )
+
+    attachment_item = next(item for item in result["check_results"] if item.id == "附件检查-数量标题")
+    assert attachment_item.result == "WARN"
+    assert "业务确认" in (attachment_item.reason or "")
+    assert result["resolved_attachments"][0]["source"] == "单独上传-标题未匹配"
