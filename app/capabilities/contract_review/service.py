@@ -200,6 +200,68 @@ def _detect_length_issue(exc: Exception) -> str | None:
     return None
 
 
+_LENGTH_COMPLETION_EXCERPT_CHARS = 500
+
+
+def _completion_value(value, key: str):
+    if isinstance(value, dict):
+        return value.get(key)
+
+    direct_value = getattr(value, key, None)
+    if direct_value is not None:
+        return direct_value
+
+    model_extra = getattr(value, "model_extra", None)
+    if isinstance(model_extra, dict):
+        return model_extra.get(key)
+    return None
+
+
+def _completion_text_diagnostic(value) -> dict | None:
+    if value is None:
+        return None
+
+    text = str(value)
+    excerpt_chars = _LENGTH_COMPLETION_EXCERPT_CHARS
+    return {
+        "chars": len(text),
+        "head": text[:excerpt_chars],
+        "tail": text[-excerpt_chars:] if len(text) > excerpt_chars else None,
+    }
+
+
+def _length_completion_diagnostic(exc: Exception) -> dict | None:
+    """Extract a bounded trace-only summary from OpenAI length errors."""
+    try:
+        completion = getattr(exc, "completion", None)
+        choices = _completion_value(completion, "choices")
+        if not choices:
+            return None
+
+        choice = choices[0]
+        message = _completion_value(choice, "message")
+        usage = _completion_value(completion, "usage")
+        usage_summary = {
+            key: value
+            for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+            if (value := _completion_value(usage, key)) is not None
+        }
+
+        diagnostic = {
+            "finish_reason": _completion_value(choice, "finish_reason"),
+            "choice_count": len(choices),
+            "usage": usage_summary or None,
+        }
+        for source_key, target_key in (("content", "content"), ("reasoning_content", "reasoning_content")):
+            text_diagnostic = _completion_text_diagnostic(_completion_value(message, source_key))
+            if text_diagnostic is not None:
+                diagnostic[f"{target_key}_chars"] = text_diagnostic["chars"]
+                diagnostic[f"{target_key}_head"] = text_diagnostic["head"]
+                diagnostic[f"{target_key}_tail"] = text_diagnostic["tail"]
+        return diagnostic
+    except Exception:
+        return None
+
 def _raise_if_length_issue(exc: Exception, label: str) -> None:
     issue = _detect_length_issue(exc)
     if issue == "input":
@@ -259,6 +321,7 @@ def _invoke_json_prompt(
             error_type=exc.__class__.__name__,
             error=str(exc),
             length_issue=_detect_length_issue(exc),
+            completion_diagnostic=_length_completion_diagnostic(exc),
         )
         _raise_if_length_issue(exc, label)
         raise
@@ -311,6 +374,7 @@ def _invoke_json_prompt(
                     error_type=exc.__class__.__name__,
                     error=str(exc),
                     length_issue=_detect_length_issue(exc),
+                    completion_diagnostic=_length_completion_diagnostic(exc),
                 )
                 _raise_if_length_issue(exc, label)
                 raise

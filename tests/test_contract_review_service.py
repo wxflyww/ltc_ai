@@ -534,6 +534,58 @@ def test_invoke_json_prompt_logs_invoke_error_event(monkeypatch, caplog):
     assert invoke_error.get("length_issue") == "output"
 
 
+
+def test_invoke_json_prompt_logs_length_completion_diagnostic(monkeypatch, caplog):
+    class FakeMessage:
+        content = "C" * 1200
+        reasoning_content = "R" * 1200
+
+    class FakeChoice:
+        finish_reason = "length"
+        message = FakeMessage()
+
+    class FakeCompletion:
+        choices = [FakeChoice()]
+        usage = {
+            "prompt_tokens": 11567,
+            "completion_tokens": 4817,
+            "total_tokens": 16384,
+        }
+
+    class FakeLengthFinishReasonError(Exception):
+        def __init__(self):
+            super().__init__("LengthFinishReasonError: Could not parse response content as the length limit was reached")
+            self.completion = FakeCompletion()
+
+    monkeypatch.setenv("LTC_ENV", "dev")
+    monkeypatch.setenv("LTC__DEBUG__LLM_TRACE", "true")
+    _reset_settings()
+    caplog.clear()
+    caplog.set_level("INFO", logger="contract_review")
+
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch(
+            "app.capabilities.contract_review.service.invoke_model",
+            side_effect=FakeLengthFinishReasonError(),
+        ):
+            with pytest.raises(ModelFormatError):
+                _invoke_json_prompt(
+                    "b4_attachment_content",
+                    validation_label="B-4-附件一",
+                    baseline={"header": {}, "signature": {}, "preset": None},
+                    attachment_text="附件内容",
+                )
+
+    payloads = [record.__dict__.get("payload", {}) for record in caplog.records if record.name == "contract_review"]
+    invoke_error = next(payload for payload in payloads if payload.get("event") == "invoke_json_prompt_invoke_error")
+    diagnostic = invoke_error["completion_diagnostic"]
+    assert diagnostic["finish_reason"] == "length"
+    assert diagnostic["content_chars"] == 1200
+    assert diagnostic["content_head"] == "C" * 500
+    assert diagnostic["content_tail"] == "C" * 500
+    assert diagnostic["reasoning_content_chars"] == 1200
+    assert diagnostic["usage"]["completion_tokens"] == 4817
+
 def test_run_b1_retries_when_reason_is_too_generic():
     outputs = [
         '{"checks":[{"result":"WARN","block_level":"提示","reason":"称谓存在不一致"}]}',
