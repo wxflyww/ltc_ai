@@ -464,3 +464,44 @@ class TestNonTargetRegression:
         schema = RESPONSE_FORMATS["a4_copies_attachments"]["json_schema"]["schema"]
         attachments = schema["properties"]["attachments_declared"]
         assert attachments.get("maxItems") != 3
+
+
+class TestB1EvidenceVerification:
+    def test_matching_labeled_attachment_definition_is_pass(self):
+        parties = [
+            {"role": "\u7532\u65b9", "name": "\u6d59\u6c5f\u5409\u5229\u6c7d\u8f66\u5de5\u7a0b\u6280\u672f\u5f00\u53d1\u6709\u9650\u516c\u53f8", "aliases": []},
+            {"role": "\u4e59\u65b9", "name": "\u4e1c\u8f6f\u96c6\u56e2\uff08\u4e0a\u6d77\uff09\u6709\u9650\u516c\u53f8", "aliases": []},
+        ]
+        segment = (
+            "\u9879\u76ee\u5355\u4f4d\uff08\u4ee5\u4e0b\u7b80\u79f0\u7532\u65b9\uff09\uff1a\u6d59\u6c5f\u5409\u5229\u6c7d\u8f66\u5de5\u7a0b\u6280\u672f\u5f00\u53d1\u6709\u9650\u516c\u53f8\n"
+            "\u65bd\u5de5\u5355\u4f4d\uff08\u4ee5\u4e0b\u7b80\u79f0\u4e59\u65b9\uff09\uff1a\u4e1c\u8f6f\u96c6\u56e2\uff08\u4e0a\u6d77\uff09\u6709\u9650\u516c\u53f8"
+        )
+        payload = {
+            "checks": [
+                {"result": "WARN", "block_level": "\u63d0\u793a", "role": "\u7532\u65b9", "baseline_appellation": "\u6d59\u6c5f\u5409\u5229\u6c7d\u8f66\u5de5\u7a0b\u6280\u672f\u5f00\u53d1\u6709\u9650\u516c\u53f8", "found_appellation": "\u9879\u76ee\u5355\u4f4d", "evidence_quote": "\u9879\u76ee\u5355\u4f4d\uff08\u4ee5\u4e0b\u7b80\u79f0\u7532\u65b9\uff09\uff1a\u6d59\u6c5f\u5409\u5229\u6c7d\u8f66\u5de5\u7a0b\u6280\u672f\u5f00\u53d1\u6709\u9650\u516c\u53f8", "evidence_type": "party_definition"},
+                {"result": "WARN", "block_level": "\u63d0\u793a", "role": "\u4e59\u65b9", "baseline_appellation": "\u4e1c\u8f6f\u96c6\u56e2\uff08\u4e0a\u6d77\uff09\u6709\u9650\u516c\u53f8", "found_appellation": "\u65bd\u5de5\u5355\u4f4d", "evidence_quote": "\u65bd\u5de5\u5355\u4f4d\uff08\u4ee5\u4e0b\u7b80\u79f0\u4e59\u65b9\uff09\uff1a\u4e1c\u8f6f\u96c6\u56e2\uff08\u4e0a\u6d77\uff09\u6709\u9650\u516c\u53f8", "evidence_type": "party_definition"},
+            ]
+        }
+
+        items = _finalize_structured_b1_observations(payload, "\u9644\u4ef64", segment, parties)
+
+        assert [(item.result, item.reason) for item in items] == [("PASS", None)]
+
+    @pytest.mark.parametrize(
+        ("found", "evidence"),
+        [
+            ("\u5409\u5229\u5ea7\u8231\u4e2d\u5fc3", "\u5409\u5229\u5ea7\u8231\u4e2d\u5fc3\u5404\u6a21\u5757\u8d1f\u8d23\u4eba\u76f4\u63a5\u53c2\u4e0e\u7ba1\u63a7\u548c\u6279\u51c6\u3002"),
+            ("\u5409\u5229", "\u9879\u76ee\u5f00\u53d1\u8303\u56f4\u5305\u542b\u6a2a\u5c55\u5409\u5229 Flyme OS \u4e3b\u7ebf\u6700\u65b0\u529f\u80fd\u3002"),
+        ],
+    )
+    def test_non_party_context_is_pass_even_when_model_emits_warn(self, found, evidence):
+        parties = [{"role": "\u7532\u65b9", "name": "\u6d59\u6c5f\u5409\u5229\u6c7d\u8f66\u5de5\u7a0b\u6280\u672f\u5f00\u53d1\u6709\u9650\u516c\u53f8", "aliases": []}]
+        payload = {
+            "checks": [
+                {"result": "WARN", "block_level": "\u63d0\u793a", "role": "\u7532\u65b9", "baseline_appellation": "\u6d59\u6c5f\u5409\u5229\u6c7d\u8f66\u5de5\u7a0b\u6280\u672f\u5f00\u53d1\u6709\u9650\u516c\u53f8", "found_appellation": found, "evidence_quote": evidence, "evidence_type": "party_appellation"},
+            ]
+        }
+
+        items = _finalize_structured_b1_observations(payload, "\u9644\u4ef62", evidence, parties)
+
+        assert [(item.result, item.reason) for item in items] == [("PASS", None)]

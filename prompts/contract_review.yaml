@@ -115,6 +115,7 @@ b1_appellation:
     - found_appellation：当前文本中发现的未声明称谓；
     - evidence_quote：只摘录当前文本内能证明称谓使用的完整短句；
     - evidence_type：普通签约方称谓使用 party_appellation，附件内角色主体定义使用 party_definition，附件内角色未定义主体使用 role_without_definition。合同或项目名称使用 contract_or_project_name，背景或历史项目引用使用 background_reference，无法判断使用 unknown。
+    For party_definition, found_appellation must be the actual entity after the role mapping, never a leading business label such as a project or construction unit.
     evidence_type 为 party_appellation 或 party_definition 时，仅发现称谓不属于首页法定全称或明确简称才输出WARN/FAIL；evidence_type 为 role_without_definition 时，附件内出现该角色即输出WARN；其他情况返回空checks。
     JSON结构示例：
     {{

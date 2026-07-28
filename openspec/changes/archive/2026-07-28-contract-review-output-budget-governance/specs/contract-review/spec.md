@@ -1,6 +1,6 @@
 # contract-review 规格说明（变更增量）
 
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: B-1/B-4 审查发现项输出预算
 

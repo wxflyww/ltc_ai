@@ -640,6 +640,59 @@ def _compact_b1_text(value: str | None) -> str:
     return "".join(str(value or "").split())
 
 
+_B1_NON_PARTY_CONTEXT_HINTS = (
+    "\u90e8\u95e8",
+    "\u4e1a\u52a1\u4e2d\u5fc3",
+    "\u4e2d\u5fc3",
+    "\u54c1\u724c",
+    "\u9879\u76ee\u56e2\u961f",
+    "\u56e2\u961f",
+    "\u4ea7\u54c1",
+    "\u7cfb\u7edf",
+    "\u8f66\u578b",
+    "\u9879\u76ee",
+    "\u6a21\u5757",
+    "\u8d1f\u8d23\u4eba",
+    "os",
+)
+
+
+def _extract_b1_defined_party(evidence: str, role: str) -> str | None:
+    compact_evidence = _compact_b1_text(evidence)
+    compact_role = _compact_b1_text(role)
+    role_index = compact_evidence.find(compact_role)
+    if role_index < 0:
+        return None
+    tail = compact_evidence[role_index + len(compact_role):]
+    separator_indexes = [
+        index for index in (tail.find(":"), tail.find("\uff1a"), tail.find("\u4e3a")) if index >= 0
+    ]
+    if not separator_indexes:
+        return None
+    candidate = tail[min(separator_indexes) + 1:]
+    for boundary in ("\u3002", "\uff1b", ";", "\uff0c", ",", "\n"):
+        candidate = candidate.split(boundary, 1)[0]
+    return candidate or None
+
+
+def _is_b1_non_party_context(found: str, evidence: str) -> bool:
+    compact_found = _compact_b1_text(found).casefold()
+    compact_evidence = _compact_b1_text(evidence).casefold()
+    if not compact_found:
+        return True
+    if any(hint in compact_found for hint in _B1_NON_PARTY_CONTEXT_HINTS):
+        return True
+    offset = 0
+    while True:
+        match_index = compact_evidence.find(compact_found, offset)
+        if match_index < 0:
+            return False
+        suffix = compact_evidence[match_index + len(compact_found):match_index + len(compact_found) + 12]
+        if any(hint in suffix for hint in _B1_NON_PARTY_CONTEXT_HINTS):
+            return True
+        offset = match_index + len(compact_found)
+
+
 def _has_structured_b1_observation(payload: dict) -> bool:
     checks = payload.get("checks", [])
     return isinstance(checks, list) and any(
@@ -688,13 +741,25 @@ def _build_verified_b1_item(
         )
     elif evidence_type in {"party_appellation", "party_definition"}:
         aliases = {str(alias).strip() for alias in party.get("aliases", []) if str(alias).strip()}
-        allowed_appellations = {baseline, role, *aliases}
-        compact_found = _compact_b1_text(found)
-        if not found or found in allowed_appellations or compact_found not in compact_evidence:
-            return None
+        allowed_entities = {_compact_b1_text(value) for value in {baseline, *aliases}}
+        if evidence_type == "party_definition":
+            defined_party = _extract_b1_defined_party(evidence, role)
+            if not defined_party or _compact_b1_text(defined_party) in allowed_entities:
+                return None
+            found = defined_party
+        else:
+            compact_found = _compact_b1_text(found)
+            allowed_appellations = {*allowed_entities, _compact_b1_text(role)}
+            if (
+                not found
+                or compact_found in allowed_appellations
+                or compact_found not in compact_evidence
+                or _is_b1_non_party_context(found, evidence)
+            ):
+                return None
         reason = _truncate_b1_reason(
-            f"{scope_label}中：{role}称谓疑似不一致，发现“{found}”，基准为“{baseline}”。"
-            f"证据“{evidence}”。请业务确认是否同一主体。"
+            f"{scope_label}\u4e2d\uff1a{role}\u79f0\u8c13\u7591\u4f3c\u4e0d\u4e00\u81f4\uff0c\u53d1\u73b0\u201c{found}\u201d\uff0c\u57fa\u51c6\u4e3a\u201c{baseline}\u201d\u3002"
+            f"\u8bc1\u636e\u201c{evidence}\u201d\u3002\u8bf7\u4e1a\u52a1\u786e\u8ba4\u662f\u5426\u540c\u4e00\u4e3b\u4f53\u3002"
         )
     else:
         return None
