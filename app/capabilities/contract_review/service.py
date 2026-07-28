@@ -473,6 +473,9 @@ _B1_NON_APPELLATION_HINTS = (
 
 _B1_REASON_MAX_CHARS = 160
 
+# 审查发现项每个检查范围最多保留的问题数量
+_REVIEW_FINDINGS_MAX_ITEMS = 3
+
 
 def _truncate_b1_reason(text: str) -> str:
     if len(text) <= _B1_REASON_MAX_CHARS:
@@ -704,6 +707,11 @@ def _build_verified_b1_item(
     )
 
 
+def _sort_by_severity(items: list[CheckItem]) -> list[CheckItem]:
+    """FAIL 优先于 WARN，同级别保持原始顺序（稳定排序）。"""
+    return sorted(items, key=lambda item: 0 if item.result == "FAIL" else 1)
+
+
 def _finalize_structured_b1_observations(
     payload: dict,
     scope_label: str,
@@ -729,7 +737,8 @@ def _finalize_structured_b1_observations(
         items.append(item)
 
     if items:
-        return items
+        items = _sort_by_severity(items)
+        return items[:_REVIEW_FINDINGS_MAX_ITEMS]
     return [CheckItem(
         id="B-1",
         name=f"称谓一致性-{scope_label}",
@@ -885,6 +894,9 @@ def _finalize_b4_items(payload: dict, scope_label: str, attachment_text: str, ba
         items.extend(parsed)
     if not items:
         items.append(CheckItem(id="B-4", name=item_name, result="PASS", block_level="通过", reason=None))
+        return items
+    items = _sort_by_severity(items)
+    items = items[:_REVIEW_FINDINGS_MAX_ITEMS]
     return [
         CheckItem(
             id=item.id,

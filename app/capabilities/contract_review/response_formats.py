@@ -2,8 +2,11 @@ from copy import deepcopy
 from typing import Any
 
 
-def _nullable_string() -> dict[str, Any]:
-    return {"type": ["string", "null"]}
+def _nullable_string(max_length: int | None = None) -> dict[str, Any]:
+    schema: dict[str, Any] = {"type": ["string", "null"]}
+    if max_length is not None:
+        schema["maxLength"] = max_length
+    return schema
 
 
 def _nullable_number() -> dict[str, Any]:
@@ -31,12 +34,12 @@ CONTRACT_PARTY_SCHEMA = _object({
 })
 
 B1_OBSERVATION_SCHEMA = _object({
-    "result": {"type": "string", "enum": ["PASS", "WARN", "FAIL", "NA"]},
+    "result": {"type": "string", "enum": ["WARN", "FAIL"]},
     "block_level": {"type": "string", "enum": ["通过", "提示", "硬阻断", "不适用"]},
-    "role": _nullable_string(),
-    "baseline_appellation": _nullable_string(),
-    "found_appellation": _nullable_string(),
-    "evidence_quote": _nullable_string(),
+    "role": _nullable_string(max_length=20),
+    "baseline_appellation": _nullable_string(max_length=100),
+    "found_appellation": _nullable_string(max_length=100),
+    "evidence_quote": _nullable_string(max_length=200),
     "evidence_type": {
         "type": ["string", "null"],
         "enum": ["party_appellation", "party_definition", "role_without_definition", "contract_or_project_name", "background_reference", "unknown", None],
@@ -50,12 +53,12 @@ CHECK_ITEM_SCHEMA = _object({
 })
 
 B4_OBSERVATION_SCHEMA = _object({
-    "result": {"type": "string", "enum": ["PASS", "WARN", "FAIL", "NA"]},
+    "result": {"type": "string", "enum": ["WARN", "FAIL"]},
     "block_level": {"type": "string", "enum": ["通过", "提示", "硬阻断", "不适用"]},
     "check_type": {"type": "string", "enum": ["total_amount", "other"]},
     "attachment_value": _nullable_number(),
-    "attachment_evidence": _nullable_string(),
-    "reason": _nullable_string(),
+    "attachment_evidence": _nullable_string(max_length=200),
+    "reason": _nullable_string(max_length=200),
 })
 
 RESPONSE_FORMATS: dict[str, dict[str, Any]] = {
@@ -186,7 +189,7 @@ RESPONSE_FORMATS: dict[str, dict[str, Any]] = {
             "name": "contract_review_b1_appellation",
             "strict": True,
             "schema": _object({
-                "checks": {"type": "array", "items": B1_OBSERVATION_SCHEMA},
+                "checks": {"type": "array", "items": B1_OBSERVATION_SCHEMA, "maxItems": 3},
             }),
         },
     },
@@ -196,7 +199,7 @@ RESPONSE_FORMATS: dict[str, dict[str, Any]] = {
             "name": "contract_review_b4_attachment_content",
             "strict": True,
             "schema": _object({
-                "checks": {"type": "array", "items": B4_OBSERVATION_SCHEMA},
+                "checks": {"type": "array", "items": B4_OBSERVATION_SCHEMA, "maxItems": 3},
             }),
         },
     },

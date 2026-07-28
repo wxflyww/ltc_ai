@@ -102,9 +102,13 @@ b1_appellation:
   user: |
     你只检查“签约主体称谓是否一致”。首页明确的签约方基准及其明确简称是唯一合法称谓集合。
     合同名称、项目名称、项目编号、背景或历史项目引用中出现的公司名称不是签约方称谓证据，不得输出WARN/FAIL。
+    部门、业务中心、品牌、项目团队、产品、系统、车型、项目名称即使包含签约主体名称片段，也不是签约方称谓，不得输出WARN/FAIL。
+    只有当证据能够证明该称谓正在指代承担合同权利义务的签约方时，才输出WARN/FAIL。
     当前文本仅代表“{scope_label}”；不得引用合同正文、其他附件或任何当前文本之外的内容作为证据。
     对附件：若出现“甲方”或“乙方”等角色但未在附件内明确写出该角色对应的主体，必须输出WARN，evidence_type为role_without_definition；不得因为首页已有定义而直接通过。
     若附件内明确写出“甲方：某主体”“乙方：某主体”或等价定义，必须与签约方基准中同角色的法定全称或明确简称比对；不一致时输出WARN，evidence_type为party_definition。
+    【输出预算】最多输出3条不同的WARN/FAIL观察；无问题返回{{"checks": []}}；只输出WARN或FAIL，不输出PASS或NA。
+    按严重程度排序：FAIL优先于WARN；同级别按证据强度排序。相同问题或相同证据不得重复输出。
     每个WARN/FAIL必须返回一条结构化观察，所有字段必须存在：
     - role：首页签约方角色；
     - baseline_appellation：该角色的首页法定全称；
@@ -131,7 +135,9 @@ b4_attachment_content:
   user: |
     若检查附件总价，只有在【比对基准】的 amount_payment 同时给出 total_amount_numeric 和 total_amount_evidence 时才可输出该问题；不得自行推断合同正文金额。
     总价不一致时，check_type 必须为 total_amount，attachment_value 为附件总价数值，attachment_evidence 为当前附件内同时包含该数值的完整短句，reason 为 null。
-    非金额问题使用 check_type=other，attachment_value 和 attachment_evidence 为 null，reason 说明问题；无问题返回空 checks。
+    非金额问题使用 check_type=other，attachment_value 和 attachment_evidence 为 null，reason 说明问题。
+    【输出预算】最多输出3条不同的WARN/FAIL观察；无问题返回{{"checks": []}}；只输出WARN或FAIL，不输出PASS或NA。
+    按严重程度排序：FAIL优先于WARN；同级别按证据强度排序。相同问题或相同证据不得重复输出。
     JSON结构示例：
     {{
       "checks": [
