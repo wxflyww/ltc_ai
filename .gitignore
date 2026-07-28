@@ -60,3 +60,6 @@ config/config-local-*.yaml
 extract_md.py
 .tmp-*.patch
 
+# 本地运行诊断材料
+tmp/
+
