@@ -19,7 +19,7 @@ class ServerSettings(BaseModel):
 class LlmSettings(BaseModel):
     base_url: str = ""
     model: str = "qwen3.6-35b-a3b"
-    temperature: float = 0.3
+    temperature: float = 0.1
     timeout: int = 30
     api_key: str = ""
 
