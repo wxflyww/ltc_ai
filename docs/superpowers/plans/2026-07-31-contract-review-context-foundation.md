@@ -39,6 +39,10 @@ def test_evidence_requires_traceable_quote():
     with pytest.raises(ValidationError):
         EvidenceRef(document_key="main", source_locator="", quote="")
 
+def test_dynamic_fields_reject_non_json_values():
+    with pytest.raises(ValidationError):
+        FactDomain(state="COMPLETE", data={"bad": object()}, issues=[])
+
 def test_context_payload_omits_optional_source_metadata():
     payload = make_context().to_payload()
     assert "source_file_sha256" not in payload["source_snapshot"]["main_document"]
@@ -78,7 +82,7 @@ class ReviewContext(BaseModel):
         return self.model_dump(mode="json", exclude_none=True)
 ```
 
-所有身份、定位和引文字段使用 `min_length=1`；SHA-256 字段匹配 `^sha256:[0-9a-f]{64}$`。`SourceSnapshot` 拒绝重复键和附件键 `main`；`FactDomain` 强制非完整状态说明原因，完整状态不得携带缺口。
+所有身份、定位和引文字段使用 `min_length=1`；SHA-256 字段匹配 `^sha256:[0-9a-f]{64}$`。`SourceSnapshot` 拒绝重复键和附件键 `main`；`FactDomain` 强制非完整状态说明原因，完整状态不得携带缺口。`FactDomain.data` 和 `EvidenceRef.attributes` 使用递归 JSON 值约束，保留显式 `null`，拒绝 Python 对象、集合、NaN 和 Infinity。
 
 - [x] **Step 4: 运行模型测试并确认通过**
 
@@ -112,6 +116,12 @@ def test_document_set_hash_is_attachment_order_independent():
 
 def test_context_digest_ignores_existing_digest_and_json_key_order():
     assert compute_context_digest(payload_a()) == compute_context_digest(payload_b())
+
+def test_context_digest_model_and_mapping_are_equivalent():
+    assert compute_context_digest(context) == compute_context_digest(context.to_payload())
+
+def test_context_digest_distinguishes_nested_null_from_absent():
+    assert compute_context_digest(with_null) != compute_context_digest(without_key)
 ```
 
 - [x] **Step 2: 运行测试并确认目标函数尚不存在**
@@ -136,7 +146,7 @@ def compute_document_set_hash(
 def compute_context_digest(context: ReviewContext | Mapping[str, Any]) -> str: ...
 ```
 
-`canonical_json_bytes` 使用 `ensure_ascii=False`、`sort_keys=True`、`separators=(",", ":")`、`allow_nan=False`；摘要统一加 `sha256:` 前缀。文档集合主文档固定第一，附件按 `document_key` 排序，内嵌附件以 `title` 填入统一的 `filename` 摘要槽位。
+`canonical_json_bytes` 使用 `ensure_ascii=False`、`sort_keys=True`、`separators=(",", ":")`、`allow_nan=False`；摘要统一加 `sha256:` 前缀。完整 Mapping 先校验并规范化为 `ReviewContext`，与模型对象共用同一 payload 和摘要路径；动态 JSON 中的显式 `null` 不得按可选模型字段删除。文档集合主文档固定第一，附件按 `document_key` 排序，内嵌附件以 `title` 填入统一的 `filename` 摘要槽位。
 
 - [x] **Step 4: 运行摘要测试并确认通过**
 
@@ -248,4 +258,4 @@ Expected: 两条命令均退出码 0。
 
 - [x] **Step 5: 更新任务状态并复核范围**
 
-确认所有 OpenSpec 任务标记为完成；`git diff --stat` 只包含本 change、实施计划、新模块、新测试、打包清单、正式 Schema 权威来源同步，以及已承诺的基线 Markdown 行尾清理。按用户要求不创建实现提交，只在最终回复中给出建议提交边界和提交信息。
+确认所有 OpenSpec 任务标记为完成；`git diff --stat` 只包含本 change、实施计划、新模块、新测试、打包清单和正式 Schema 权威来源同步。按用户要求不创建实现提交，只在最终回复中给出建议提交边界和提交信息。

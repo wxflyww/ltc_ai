@@ -26,7 +26,7 @@
 
 ### 1. 公共信封强类型，事实内容渐进细化
 
-`ReviewContext` 的版本、来源快照、事实域状态、证据定位、准备元数据和摘要采用 Pydantic 强类型。`FactDomain.data` 暂时只约束为 JSON 对象或数组，`EvidenceRef.attributes` 暂时为 JSON 对象；后续 prepare 变更根据全检查点迁移矩阵细化各领域结构。
+`ReviewContext` 的版本、来源快照、事实域状态、证据定位、准备元数据和摘要采用 Pydantic 强类型。`FactDomain.data` 暂时只约束为 JSON 对象或数组，`EvidenceRef.attributes` 暂时为 JSON 对象；其递归值只允许标准 JSON 类型和有限数值，保留业务数据中的显式 `null`，拒绝 Python 对象、集合、NaN 和 Infinity。后续 prepare 变更根据全检查点迁移矩阵细化各领域结构。
 
 这样能够先稳定跨阶段信封，又不会在尚未设计全部检查点事实时制造大量投机字段。备选方案是本次一次性定义所有检查点事实模型，但会把后续三个变更的业务设计提前塞入基础变更，范围过大。
 
@@ -42,7 +42,7 @@ Markdown 规范化依次执行：移除字符串开头 BOM、Unicode NFC、CRLF/
 
 用于文档集合摘要的文件名规范化仅移除路径、执行 Unicode NFC 并去掉首尾空白，保留大小写、扩展名和标点，避免把合法不同文件过度合并。主文档固定排第一，附件按 `document_key` 排序；内嵌附件以 `title` 作为文件名槽位。
 
-确定性 JSON 使用 UTF-8、键排序、紧凑分隔符、保留 Unicode 字符并拒绝 NaN。`context_digest` 对排除自身后的完整上下文计算；所有可选空字段在摘要和对外 payload 中省略。
+确定性 JSON 使用 UTF-8、键排序、紧凑分隔符、保留 Unicode 字符并拒绝 NaN。`context_digest` 对排除自身后的完整上下文计算；Schema 声明的可选空字段在摘要和对外 payload 中省略，动态 JSON 数据中的显式 `null` 保留。完整 JSON 映射必须先规范化为 `ReviewContext`，保证对象和映射使用同一摘要路径。
 
 `compute_document_set_hash` 既接受完整 `SourceSnapshot`，也接受尚未组装快照的主文档模型和附件列表，避免 prepare 首次生成摘要时填入虚假占位值。
 

@@ -4,8 +4,6 @@ import unicodedata
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from pydantic import BaseModel
-
 from app.capabilities.contract_review.two_stage.schemas import (
     AttachmentSnapshot,
     EmbeddedAttachmentSnapshot,
@@ -83,21 +81,12 @@ def compute_document_set_hash(
     return _sha256_digest(canonical_json_bytes(manifest))
 
 
-def _json_payload(value: Any) -> Any:
-    if isinstance(value, ReviewContext):
-        return value.to_payload()
-    if isinstance(value, BaseModel):
-        return value.model_dump(mode="json", exclude_none=True)
-    if isinstance(value, Mapping):
-        return {str(key): _json_payload(item) for key, item in value.items() if item is not None}
-    if isinstance(value, (list, tuple)):
-        return [_json_payload(item) for item in value]
-    return value
-
-
 def compute_context_digest(context: ReviewContext | Mapping[str, Any]) -> str:
-    payload = _json_payload(context)
-    if not isinstance(payload, dict):
-        raise TypeError("ReviewContext 摘要输入必须是 JSON 对象")
+    normalized = (
+        context
+        if isinstance(context, ReviewContext)
+        else ReviewContext.model_validate(context)
+    )
+    payload = normalized.to_payload()
     payload = {key: value for key, value in payload.items() if key != "context_digest"}
     return _sha256_digest(canonical_json_bytes(payload))

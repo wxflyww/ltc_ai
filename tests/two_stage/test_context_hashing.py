@@ -1,3 +1,5 @@
+import pytest
+
 from app.capabilities.contract_review.two_stage.hashing import (
     canonical_json_bytes,
     compute_context_digest,
@@ -6,7 +8,7 @@ from app.capabilities.contract_review.two_stage.hashing import (
     normalize_snapshot_name,
     parsed_content_sha256,
 )
-from app.capabilities.contract_review.two_stage.schemas import SourceSnapshot
+from app.capabilities.contract_review.two_stage.schemas import ReviewContext, SourceSnapshot
 
 
 SHA_A = "sha256:" + "a" * 64
@@ -50,6 +52,34 @@ def embedded() -> dict:
     }
 
 
+def review_context_payload(header_data: dict) -> dict:
+    return {
+        "schema_version": "review-context/v1",
+        "source_snapshot": snapshot([]).model_dump(mode="json", exclude_none=True),
+        "shared_facts": {
+            "header": {"state": "COMPLETE", "data": header_data, "issues": []},
+            "parties": {"state": "COMPLETE", "data": [], "issues": []},
+            "signature": {"state": "COMPLETE", "data": {}, "issues": []},
+            "amount_payment": {"state": "COMPLETE", "data": {}, "issues": []},
+            "attachment_manifest": {"state": "COMPLETE", "data": [], "issues": []},
+        },
+        "evidence_index": {
+            "party_mentions": [],
+            "signature_mentions": [],
+            "amount_mentions": [],
+            "attachment_relations": [],
+        },
+        "preparation_issues": [],
+        "preparation_meta": {
+            "pipeline_version": "contract-review-prepare/1.0.0",
+            "prompt_bundle_hash": SHA_A,
+            "model_deployment": "qwen3.6-35b-a3b",
+            "created_at": "2026-07-31T10:00:00+08:00",
+        },
+        "context_digest": SHA_B,
+    }
+
+
 def test_markdown_hash_normalizes_bom_newlines_and_unicode():
     left = "\ufeff# Caf\u00e9\r\n正文\r"
     right = "# Cafe\u0301\n正文\n"
@@ -74,6 +104,11 @@ def test_snapshot_name_removes_path_and_outer_whitespace_only():
 
 def test_canonical_json_uses_sorted_compact_utf8():
     assert canonical_json_bytes({"b": 1, "a": "中文"}) == '{"a":"中文","b":1}'.encode("utf-8")
+
+
+def test_canonical_json_rejects_nan():
+    with pytest.raises(ValueError):
+        canonical_json_bytes({"value": float("nan")})
 
 
 def test_document_set_hash_is_attachment_order_independent():
@@ -107,16 +142,24 @@ def test_document_set_hash_changes_with_identity_name_or_content():
     assert compute_document_set_hash(snapshot([changed_content])) != baseline
 
 
-def test_context_digest_ignores_existing_digest_key_order_and_optional_none():
-    first = {
-        "schema_version": "review-context/v1",
-        "source_snapshot": {"contract_id": "C001", "parser_meta": None},
-        "context_digest": SHA_A,
-    }
-    second = {
-        "source_snapshot": {"contract_id": "C001"},
-        "schema_version": "review-context/v1",
-        "context_digest": SHA_B,
-    }
+def test_context_digest_ignores_existing_digest_and_optional_model_none():
+    first = review_context_payload({})
+    first["source_snapshot"]["parser_meta"] = None
+    second = review_context_payload({})
+    second["context_digest"] = SHA_A
 
     assert compute_context_digest(first) == compute_context_digest(second)
+
+
+def test_context_digest_is_identical_for_model_and_json_mapping_with_nested_null():
+    payload = review_context_payload({"unknown": None})
+    context = ReviewContext.model_validate(payload)
+
+    assert compute_context_digest(context) == compute_context_digest(context.to_payload())
+
+
+def test_context_digest_distinguishes_nested_null_from_absent_key():
+    with_null = review_context_payload({"unknown": None})
+    without_key = review_context_payload({})
+
+    assert compute_context_digest(with_null) != compute_context_digest(without_key)

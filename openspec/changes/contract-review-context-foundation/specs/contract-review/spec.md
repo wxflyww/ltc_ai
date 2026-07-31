@@ -37,6 +37,11 @@
 - **WHEN** 事实域状态为 `UNAVAILABLE` 且包含缺口原因
 - **THEN** 系统 SHALL 保留该状态和原因，不得静默转换为完整或通过状态
 
+#### Scenario: 事实数据仅接受标准 JSON 值
+- **WHEN** `FactDomain.data` 的递归值包含 Python 对象、集合、NaN 或 Infinity
+- **THEN** 系统 SHALL 拒绝该事实域
+- **AND** 合法 JSON 中的显式 `null` SHALL 被保留
+
 ### Requirement: 证据引用可追溯到来源
 证据索引中的每条证据 SHALL 至少包含 `document_key`、`source_locator` 和原文 `quote`，并可携带结构化 `attributes`。基础证据索引 SHALL 分别容纳签约方、签署人、金额和附件关系证据。
 
@@ -47,6 +52,10 @@
 #### Scenario: 证据指向当前快照之外的文档
 - **WHEN** 任一证据的 `document_key` 不存在于当前 `source_snapshot` 的主文档或附件中
 - **THEN** 上下文校验 SHALL 抛出 `ContextIntegrityError`
+
+#### Scenario: 证据属性仅接受标准 JSON 值
+- **WHEN** `EvidenceRef.attributes` 的递归值包含 Python 对象、集合、NaN 或 Infinity
+- **THEN** 系统 SHALL 拒绝该证据记录
 
 ### Requirement: Markdown 内容摘要算法确定
 系统 SHALL 对实际收到的 Markdown 执行固定规范化后计算 `parsed_content_sha256`：仅移除开头 BOM、执行 Unicode NFC、将 CRLF 和 CR 转换为 LF，并保留其他字符。结果 SHALL 为 `sha256:` 加 64 位小写十六进制。
@@ -82,6 +91,11 @@
 #### Scenario: JSON 键顺序不同
 - **WHEN** 两个上下文的 JSON 对象键顺序不同但字段和值相同
 - **THEN** 系统 SHALL 计算相同的 `context_digest`
+
+#### Scenario: 模型和 JSON 映射使用同一摘要语义
+- **WHEN** 同一完整上下文分别以 `ReviewContext` 对象和 JSON 映射传入摘要函数
+- **THEN** 系统 SHALL 计算相同的 `context_digest`
+- **AND** 动态 JSON 中的显式 `null` SHALL 与字段缺失产生不同摘要
 
 #### Scenario: 上下文被修改
 - **WHEN** 上下文任一受摘要保护的字段在生成摘要后被修改

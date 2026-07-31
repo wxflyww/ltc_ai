@@ -150,6 +150,55 @@ def test_evidence_requires_traceable_source_and_quote():
         EvidenceRef(document_key="main", source_locator="", quote="")
 
 
+@pytest.mark.parametrize(
+    "invalid_value",
+    [object(), {1, 2}, float("nan"), float("inf"), float("-inf")],
+    ids=["object", "set", "nan", "positive-infinity", "negative-infinity"],
+)
+def test_fact_data_rejects_non_json_values(invalid_value: object):
+    with pytest.raises(ValidationError):
+        FactDomain(
+            state="COMPLETE",
+            data={"invalid": invalid_value},
+            issues=[],
+        )
+
+
+@pytest.mark.parametrize(
+    "invalid_value",
+    [object(), {1, 2}, float("nan"), float("inf"), float("-inf")],
+    ids=["object", "set", "nan", "positive-infinity", "negative-infinity"],
+)
+def test_evidence_attributes_reject_non_json_values(invalid_value: object):
+    with pytest.raises(ValidationError):
+        EvidenceRef(
+            document_key="main",
+            source_locator="paragraph:1",
+            quote="证据",
+            attributes={"invalid": invalid_value},
+        )
+
+
+def test_dynamic_json_fields_preserve_nested_null():
+    fact = FactDomain(
+        state="COMPLETE",
+        data={"unknown": None, "items": [1, None]},
+        issues=[],
+    )
+    evidence = EvidenceRef(
+        document_key="main",
+        source_locator="paragraph:1",
+        quote="证据",
+        attributes={"unknown": None},
+    )
+
+    assert fact.model_dump(mode="json")["data"] == {
+        "unknown": None,
+        "items": [1, None],
+    }
+    assert evidence.model_dump(mode="json")["attributes"] == {"unknown": None}
+
+
 def test_context_payload_omits_optional_source_metadata():
     context = ReviewContext.model_validate(context_payload())
 

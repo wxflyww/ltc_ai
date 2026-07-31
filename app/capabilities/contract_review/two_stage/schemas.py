@@ -1,13 +1,34 @@
+import math
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 
 SCHEMA_VERSION = "review-context/v1"
 FactState = Literal["COMPLETE", "PARTIAL", "UNAVAILABLE"]
 Sha256Digest = Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
 NonBlankStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+def _reject_non_finite_json(value: JsonValue) -> JsonValue:
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError("JSON 数值不得为 NaN 或 Infinity")
+    if isinstance(value, dict):
+        for item in value.values():
+            _reject_non_finite_json(item)
+    elif isinstance(value, list):
+        for item in value:
+            _reject_non_finite_json(item)
+    return value
 
 
 class _StrictModel(BaseModel):
@@ -84,8 +105,16 @@ class SourceSnapshot(_StrictModel):
 
 class FactDomain(_StrictModel):
     state: FactState
-    data: dict[str, Any] | list[Any]
+    data: dict[str, JsonValue] | list[JsonValue]
     issues: list[NonBlankStr] = Field(default_factory=list)
+
+    @field_validator("data")
+    @classmethod
+    def require_finite_json_data(
+        cls,
+        value: dict[str, JsonValue] | list[JsonValue],
+    ) -> dict[str, JsonValue] | list[JsonValue]:
+        return _reject_non_finite_json(value)
 
     @model_validator(mode="after")
     def validate_state_issues(self) -> "FactDomain":
@@ -108,7 +137,15 @@ class EvidenceRef(_StrictModel):
     document_key: NonBlankStr
     source_locator: NonBlankStr
     quote: str = Field(min_length=1)
-    attributes: dict[str, Any] = Field(default_factory=dict)
+    attributes: dict[str, JsonValue] = Field(default_factory=dict)
+
+    @field_validator("attributes")
+    @classmethod
+    def require_finite_json_attributes(
+        cls,
+        value: dict[str, JsonValue],
+    ) -> dict[str, JsonValue]:
+        return _reject_non_finite_json(value)
 
     @field_validator("document_key", "source_locator", "quote")
     @classmethod
