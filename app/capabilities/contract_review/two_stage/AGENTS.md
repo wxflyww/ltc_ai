@@ -5,8 +5,9 @@
 ## 权威来源
 
 - 当前生产行为：现有代码、已生效 OpenSpec 和接口契约。
-- 未来升级设计：`docs/superpowers/specs/2026-07-28-contract-review-two-stage-upgrade-draft.md`。
-- 合同系统沟通摘要：`docs/integration/2026-07-28-contract-system-two-stage-review-communication-draft.md`，与升级设计冲突时以上述升级设计为准。
+- 未来升级的整体架构和责任边界：`docs/superpowers/specs/2026-07-28-contract-review-two-stage-upgrade-draft.md`。
+- 已立项能力的字段级契约：对应 OpenSpec 及正式 Schema；与升级草稿中的字段示例冲突时，以 OpenSpec 和 Schema 为准。
+- 合同系统沟通摘要：`docs/integration/2026-07-28-contract-system-two-stage-review-communication-draft.md`，不作为字段定义来源。
 
 不得在本文件重复维护各检查点的完整业务规则、哈希或附件判定规则；实现前读取升级设计中的对应章节。B-1/B-4 只是专项示例，不代表第二阶段的全部范围。
 

@@ -42,4 +42,5 @@ packages = [
     "app.capabilities",
     "app.capabilities.translate",
     "app.capabilities.contract_review",
+    "app.capabilities.contract_review.two_stage",
 ]

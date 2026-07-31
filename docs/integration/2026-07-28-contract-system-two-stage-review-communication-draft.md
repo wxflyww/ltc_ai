@@ -4,7 +4,7 @@
 >
 > 更新日期：2026-07-31
 >
-> 权威来源：详细架构、字段和约束以 `docs/superpowers/specs/2026-07-28-contract-review-two-stage-upgrade-draft.md` 为准；本文只面向合同系统协作沟通，不单独维护字段枚举。
+> 权威来源：整体架构和责任边界以升级主文档为准；已立项能力的字段级契约以对应 OpenSpec 及正式 Schema 为准。本文只面向合同系统协作沟通，不单独维护字段或枚举。
 
 ## 1. 希望解决的问题
 
@@ -69,7 +69,7 @@ sequenceDiagram
 
 原始文件 SHA-256 是对上传的 PDF、DOCX 等原始二进制文件计算的摘要，主要用于追溯和辅助重复识别。AI 服务还会对实际收到的 Markdown 自行计算 `parsed_content_sha256`，用于标识真正进入材料准备流程的文本。两者描述的对象不同，均不能替代业务身份字段 `attachment_id`。
 
-字段结构以升级主文档“5.1 第一阶段：准备接口”为准。合同系统应继续保存解析后的完整 Markdown（包括正文中的内嵌附件内容）作为权威来源；首期不要求另存一份去掉内嵌附件的正文 Markdown。
+字段结构以 `contract-review-context-foundation` OpenSpec 及本项目 `two_stage/schemas.py` 的正式 Schema 为准；升级主文档“5.1 第一阶段：准备接口”保留为架构背景和后续接口草案。合同系统应继续保存解析后的完整 Markdown（包括正文中的内嵌附件内容）作为权威来源；首期不要求另存一份去掉内嵌附件的正文 Markdown。
 
 ## 5. 合同系统需要保存的数据
 
@@ -170,7 +170,7 @@ AI 服务完成 Schema、摘要和文档版本校验后执行正式检查，沿�
 | 合同版本不一致 | 拒绝正式检查 | 切换到最新上下文或重新准备 |
 | 某事实域为 `PARTIAL/UNAVAILABLE` | 不静默判定为通过 | 展示相应检查无法完成或需要确认 |
 
-事实域状态值以升级主文档定义的 `COMPLETE/PARTIAL/UNAVAILABLE` 为唯一来源。
+事实域状态值以 `contract-review-context-foundation` OpenSpec 和 `two_stage/schemas.py` 定义的 `COMPLETE/PARTIAL/UNAVAILABLE` 为唯一来源，沟通稿不另行维护其他枚举值。
 
 ## 10. 联调与验收建议
 

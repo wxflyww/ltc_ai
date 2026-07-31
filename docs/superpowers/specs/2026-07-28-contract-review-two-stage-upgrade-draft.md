@@ -4,7 +4,7 @@
 >
 > 更新日期：2026-07-31
 >
-> 文档权威关系：当前行为仍以现有代码、已生效 OpenSpec 和接口契约为准。本草稿是未来升级的设计与数据契约主文档；`docs/integration/2026-07-28-contract-system-two-stage-review-communication-draft.md` 仅为对外沟通摘要，发生分歧时以本草稿为准。
+> 文档权威关系：当前生产行为仍以现有代码、已生效 OpenSpec 和接口契约为准。本草稿负责未来升级的整体架构、责任边界和后续接口方向；已立项能力的字段级契约以对应 OpenSpec 及正式 Schema 为准。`docs/integration/2026-07-28-contract-system-two-stage-review-communication-draft.md` 仅为对外沟通摘要，不作为字段定义来源。
 
 ## 1. 背景
 
@@ -123,7 +123,7 @@ flowchart LR
 
 ## 5. 接口草案
 
-> 本节是未来数据契约的一级权威草案。字段在 OpenSpec 立项后还需转为正式 Schema；沟通稿中的 JSON 示例必须与本节保持一致。
+> 本节是两阶段数据契约的架构背景。`contract-review-context-foundation` 实施后，`ReviewContext` 基础信封、来源快照、事实状态、证据容器和摘要字段以该 OpenSpec 的 `specs/contract-review/spec.md` 及 `app/capabilities/contract_review/two_stage/schemas.py` 为字段级权威；本节和沟通稿示例必须与正式契约保持一致。prepare/evaluate 请求和具体事实域内部字段仍由后续 OpenSpec 定稿。
 
 ### 5.1 第一阶段：准备接口
 
@@ -249,7 +249,7 @@ POST /api/v1/contract-review/prepare
 - `PARTIAL`：已提取部分数据，`issues` 必须说明缺口。
 - `UNAVAILABLE`：无法形成该事实域，`data` 使用该域约定的空结构，`issues` 必须说明原因。
 
-`state` 枚举只在本节维护；其他文档引用，不得复制出另一套定义。
+`state` 正式枚举由 `contract-review-context-foundation` 的 OpenSpec 和 `schemas.py` 维护；本节只作同步说明，不得另行扩展枚举值。
 
 ### 5.2 第二阶段：检查接口
 
@@ -310,7 +310,7 @@ POST /api/v1/contract-review/evaluate
 5. 按 UTF-8 无 BOM 编码后计算 SHA-256；
 6. 输出为 `sha256:` 加 64 位小写十六进制字符串。
 
-`document_set_hash` 采用稳定清单计算：主合同固定排在第一位，附件按 `document_key` 排序；每项只包含 `document_key`、规范化文件名和 `parsed_content_sha256`。该清单使用确定性 JSON 序列化后计算 SHA-256。`context_digest` 使用同一确定性 JSON 规则，但排除 `context_digest` 字段自身。正式 OpenSpec 应将排序、文件名规范化和 JSON 规范化测试向量固化为契约测试。
+`document_set_hash` 采用稳定清单计算：主合同固定排在第一位，附件按 `document_key` 排序；每项只包含 `document_key`、规范化文件名和 `parsed_content_sha256`。该清单使用确定性 JSON 序列化后计算 SHA-256。`context_digest` 使用同一确定性 JSON 规则，但排除 `context_digest` 字段自身。具体文件名规范化、确定性 JSON 和固定测试向量以 `contract-review-context-foundation` OpenSpec 及其契约测试为准。
 
 内容哈希相同，只能证明两份规范化 Markdown 文本相同，不能单独证明它们是同一业务附件。附件重复仍以 `attachment_id` 为主身份；内容哈希只按第 7 节规则作为确定性兜底或疑似重复证据。
 
