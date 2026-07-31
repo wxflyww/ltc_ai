@@ -130,6 +130,18 @@ Prompt 模板存放在 `prompts/` 目录下的 YAML 文件，通过 `app/capabil
 - 使用 `TestClient` 测试 API 契约
 - 中间件测试使用 `create_app(register_middleware=False)` 禁用中间件以隔离测试
 
+## 合同评审两阶段升级
+
+任务涉及下列任一范围时，必须先完整读取 `app/capabilities/contract_review/two_stage/AGENTS.md`：
+
+- `app/capabilities/contract_review/two_stage/**`；
+- 两阶段升级相关的 API 注册、配置或公共错误码；
+- 两阶段升级相关测试；
+- `contract-review-context-foundation`、`contract-review-prepare-api`、`contract-review-evaluate-api`、`contract-review-two-stage-pilot` OpenSpec 变更；
+- 两阶段升级方案或合同系统协作文档。
+
+该专用文件只约束两阶段升级。未明确纳入升级范围的现有合同评审代码继续遵循本文件和当前已生效契约，不因未来方案草稿自动改变行为。
+
 ## 变更编排流程（Skill + Script）
 
 仓库提供两阶段变更编排：`Explore -> Propose`。
