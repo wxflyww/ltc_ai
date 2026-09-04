@@ -4,10 +4,17 @@
 #   timeout: 300
 # ======== GitHub Models 配置 ========
 
+# llm:
+#   base_url: "http://192.168.16.10:8080/v1"
+#   model: "Qwen3.6-35B"
+#   timeout: 300  
+#  ======== 本地 vLLM 配置 ========
+
+
 llm:
-  base_url: "http://192.168.16.10:8080/v1"
-  model: "Qwen3.6-35B"
-  timeout: 300  
+  base_url: "http://10.105.1.5:4000/v1"
+  model: "DeepSeek-V4-Flash-w8a8-mtp"
+  timeout: 3000
 #  ======== 本地 vLLM 配置 ========
 
 

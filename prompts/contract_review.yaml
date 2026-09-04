@@ -58,6 +58,8 @@ a1b_our_signature:
 a3_amount_payment:
   system: |
     你是一个合同信息提取助手。只提取价格和付款条款字段。
+    只摘录合同原文明确出现的金额事实，不得计算、补全或编造金额。
+    禁止根据总价、付款比例或其他金额计算付款阶段金额，禁止根据数字金额生成中文大写。
     【重要】只输出纯JSON，不要任何解释文字、不要markdown代码块，直接输出JSON对象。
   user: |
     JSON结构示例：
@@ -66,13 +68,24 @@ a3_amount_payment:
       "payment_method": "电汇",
       "total_amount_numeric": "100",
       "total_amount_evidence": "本合同最终含税总价为100元（大写：壹佰元整）。",
+      "contract_overall_evidence": "本合同最终含税总价为100元（大写：壹佰元整）。",
       "total_amount_uppercase": "壹佰元整",
       "total_amount_match": true,
+      "amount_pairs": [
+        {{"label": "谈判不含税报价", "amount_numeric": "100", "amount_uppercase": "壹佰元整", "amount_evidence": "谈判不含税报价¥100元（大写：壹佰元整）。"}},
+        {{"label": "谈判含税报价", "amount_numeric": "100", "amount_uppercase": null, "amount_evidence": "谈判含税报价¥100元。"}}
+      ],
       "payment_stages": [
-        {{"stage_name": "首付款", "percentage": "50", "amount_numeric": "50", "amount_uppercase": "伍拾元整"}}
+        {{"stage_name": "首付款", "percentage": "50", "amount_numeric": null, "amount_uppercase": null, "amount_evidence": null}}
       ]
     }}
     `总价`存在时，total_amount_evidence 必须摘录合同正文中同时包含该数值的完整短句；无法找到时返回 null。
+    contract_overall_evidence 只有在原文明确表达“本合同整体对价/总金额/总价款”等语义时才可填写；若仅出现谈判含税报价、付款比例、阶段合计或数值相等关系，不得填写该字段，返回 null。
+    amount_pairs 承载合同中每一处金额事实（含报价及明确写出的付款阶段金额），可为完整配对或单侧事实；label 使用原文金额名称。只出现数字金额时 amount_uppercase 设为 null；只出现中文大写时 amount_numeric 设为 null。
+    amount_numeric、amount_uppercase、amount_evidence、total_amount_evidence、contract_overall_evidence 都必须原样摘录原文，不得纠正“圆/点”等字符。
+    证据必须是同一有界片段：允许普通空白或一次自然换行；禁止跨空段、标题、独立条款或存在多个候选的歧义片段进行拼接。
+    不得根据数字金额生成中文大写，不得根据总价与比例计算阶段金额，不得根据中文大写反推数字金额。
+    付款阶段只有比例时，保留 stage_name 和 percentage，amount_numeric、amount_uppercase、amount_evidence 必须返回 null；只有原文明确出现阶段金额及其证据时才填写金额字段。
     【合同全文】
     {full_text}
 

@@ -59,6 +59,64 @@ def test_review_contract_does_not_call_real_llm_in_unit_test():
     fake_invoke.assert_not_called()
 
 
+def test_pipeline_rejects_derived_payment_stage_amounts_without_contract_evidence():
+    request = ContractReviewRequest(
+        contract_md=(
+            "# 合同\n"
+            "本合同含税总价为10492500.00元（大写：壹仟零肆拾玖万贰仟伍佰元整）。\n"
+            "付款方式：电汇。付款比例为50%、40%、10%。"
+        ),
+        attachments=[],
+    )
+    responses = {
+        "a1a_party_extraction": {
+            "header": {
+                "contract_name": "测试合同",
+                "project_name": None,
+                "project_number": None,
+                "contract_number": "HT-1",
+                "signing_location": "沈阳",
+                "signing_date": "2026年8月13日",
+                "parties": [],
+            },
+            "signature_parties": [],
+            "sections": [],
+        },
+        "a3_amount_payment": {
+            "currency": "人民币",
+            "payment_method": "电汇",
+            "total_amount_numeric": "10492500.00",
+            "total_amount_evidence": "本合同含税总价为10492500.00元（大写：壹仟零肆拾玖万贰仟伍佰元整）。",
+            "contract_overall_evidence": "本合同含税总价为10492500.00元（大写：壹仟零肆拾玖万贰仟伍佰元整）。",
+            "total_amount_uppercase": "壹仟零肆拾玖万贰仟伍佰元整",
+            "total_amount_match": True,
+            "payment_stages": [
+                {"stage_name": "第一期", "percentage": "50", "amount_numeric": "5246250", "amount_uppercase": "伍佰贰拾肆万陆仟贰佰伍拾圆整"},
+                {"stage_name": "第二期", "percentage": "40", "amount_numeric": "4197000", "amount_uppercase": "肆佰壹拾玖万柒仟圆整"},
+                {"stage_name": "第三期", "percentage": "10", "amount_numeric": "1049250", "amount_uppercase": "壹佰零肆万玖仟贰佰伍拾圆整"},
+            ],
+        },
+        "a4_copies_attachments": {
+            "copies": {"total_copies": 1, "party_copies": []},
+            "attachments_declared": [],
+            "total_declared": 0,
+        },
+    }
+
+    with patch("app.capabilities.contract_review.service._invoke_json_prompt", side_effect=lambda name, **kwargs: responses[name]):
+        with patch("app.capabilities.contract_review.service.identify_our_party", return_value=(None, None)):
+            with patch("app.capabilities.contract_review.service._run_b1", return_value=[]):
+                with patch("app.capabilities.contract_review.service._run_b4", return_value=[]):
+                    result = run_review_pipeline(request)
+
+    seq7 = next(item for item in result.items if item.id == "序号7")
+    seq10 = next(item for item in result.items if item.id == "序号10")
+    assert seq7.result == "PASS"
+    assert all(stage_name not in (seq7.reason or "") for stage_name in ("第一期", "第二期", "第三期"))
+    assert seq10.result == "WARN"
+    assert "金额缺失" in (seq10.reason or "")
+
+
 def test_review_contract_converts_context_length_error_to_blocking_check():
     request = ContractReviewRequest(contract_md="# 合同", attachments=[])
     with patch(
@@ -168,6 +226,334 @@ def test_run_review_pipeline_uses_llm_adapter_and_preset_fetch():
 
     assert fake_fetch.call_args.args == ("我方公司",)
     assert any(item.id == "附件检查-数量标题" and item.result == "FAIL" for item in items)
+
+
+@pytest.mark.parametrize(
+    ("total_amount_uppercase", "expected_result"),
+    [
+        ("人民币玖拾贰万肆仟伍佰贰拾捌点叁圆", "FAIL"),
+        ("人民币玖拾贰万肆仟伍佰贰拾捌元叁角", "PASS"),
+    ],
+)
+def test_run_review_pipeline_determines_seq7_without_model_match_boolean(
+    total_amount_uppercase,
+    expected_result,
+):
+    total_amount_evidence = f"合同总价924528.30元（大写：{total_amount_uppercase}）。"
+    request = ContractReviewRequest(
+        contract_md=f"# 合同\n甲方：客户公司\n乙方：我方公司\n{total_amount_evidence}",
+        attachments=[],
+    )
+    outputs = [
+        '{"header":{"contract_name":"测试合同","contract_number":"HT-1","signing_location":"沈阳","signing_date":"2026年7月8日","parties":[{"role":"甲方","name":"客户公司"},{"role":"乙方","name":"我方公司"}]},"signature_parties":[],"sections":[]}',
+        '{"currency":"人民币","payment_method":"电汇","total_amount_numeric":"924528.30","total_amount_evidence":"' + total_amount_evidence + '","total_amount_uppercase":"' + total_amount_uppercase + '","contract_overall_evidence":"' + total_amount_evidence + '","total_amount_match":true,"payment_stages":[]}',
+        '{"copies":{"total_copies":2,"party_copies":[{"role":"甲方","copies":1},{"role":"乙方","copies":1}]},"attachments_declared":[],"total_declared":0}',
+        '{"checks":[]}',
+    ]
+
+    def fake_invoke(model, messages, response_format=None):
+        return outputs.pop(0), {"total_tokens": 1}
+
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
+            with patch("app.capabilities.contract_review.service.fetch_preset", return_value=None):
+                items = run_review_pipeline(request)
+
+    seq7 = next(item for item in items if item.id == "序号7")
+    assert seq7.result == expected_result
+    assert seq7.block_level == ("硬阻断" if expected_result == "FAIL" else "通过")
+
+
+def test_run_review_pipeline_reports_all_amount_pairs_in_seq7():
+    request = ContractReviewRequest(
+        contract_md=(
+            "# 合同\n"
+            "甲方：客户公司\n"
+            "乙方：我方公司\n"
+            "谈判不含税报价924528.30元（大写：人民币玖拾贰万肆仟伍佰贰拾捌点叁圆）。\n"
+            "谈判含税报价980000元（大写：人民币玖拾捌万圆元）。"
+        ),
+        attachments=[],
+    )
+    a3_amount = (
+        '{"currency":"人民币","payment_method":"电汇",'
+        '"total_amount_numeric":"980000","total_amount_uppercase":"人民币玖拾捌万圆元",'
+        '"total_amount_evidence":"谈判含税报价980000元（大写：人民币玖拾捌万圆元）。","total_amount_match":true,'
+        '"amount_pairs":['
+        '{"label":"谈判不含税报价","amount_numeric":"924528.30","amount_uppercase":"人民币玖拾贰万肆仟伍佰贰拾捌点叁圆","amount_evidence":"谈判不含税报价924528.30元（大写：人民币玖拾贰万肆仟伍佰贰拾捌点叁圆）。"},'
+        '{"label":"谈判含税报价","amount_numeric":"980000","amount_uppercase":"人民币玖拾捌万圆元","amount_evidence":"谈判含税报价980000元（大写：人民币玖拾捌万圆元）。"}'
+        '],"payment_stages":[]}'
+    )
+    outputs = [
+        '{"header":{"contract_name":"测试合同","contract_number":"HT-1","signing_location":"沈阳","signing_date":"2026年7月8日","parties":[{"role":"甲方","name":"客户公司"},{"role":"乙方","name":"我方公司"}]},"signature_parties":[],"sections":[]}',
+        a3_amount,
+        '{"copies":{"total_copies":2,"party_copies":[{"role":"甲方","copies":1},{"role":"乙方","copies":1}]},"attachments_declared":[],"total_declared":0}',
+        '{"checks":[]}',
+    ]
+
+    def fake_invoke(model, messages, response_format=None):
+        return outputs.pop(0), {"total_tokens": 1}
+
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
+            with patch("app.capabilities.contract_review.service.fetch_preset", return_value=None):
+                items = run_review_pipeline(request)
+
+    seq7 = next(item for item in items if item.id == "序号7")
+    assert seq7.result == "FAIL"
+    assert seq7.block_level == "硬阻断"
+    assert "谈判不含税报价" in seq7.reason
+    assert "谈判含税报价" in seq7.reason
+    assert "金额单位错误" in seq7.reason
+    assert "小数书写错误" in seq7.reason
+    assert seq7.reason.count("大写金额不一致") == 2
+    assert "合同总价大写金额不一致" not in seq7.reason
+
+
+def test_run_review_pipeline_keeps_two_identical_amount_pairs_at_different_positions():
+    request = ContractReviewRequest(
+        contract_md=(
+            "# 合同\n"
+            "甲方：客户公司\n"
+            "乙方：我方公司\n"
+            "第一期金额100元（大写：壹佰圆整）。\n"
+            "第二期金额100元（大写：壹佰圆整）。"
+        ),
+        attachments=[],
+    )
+    a3_amount = (
+        '{"currency":"人民币","payment_method":"电汇",'
+        '"total_amount_numeric":"100","total_amount_uppercase":"壹佰元整",'
+        '"total_amount_evidence":"第一期金额100元（大写：壹佰圆整）。","total_amount_match":true,'
+        '"amount_pairs":['
+        '{"label":"第一期","amount_numeric":"100","amount_uppercase":"壹佰圆整","amount_evidence":"第一期金额100元（大写：壹佰圆整）。"},'
+        '{"label":"第二期","amount_numeric":"100","amount_uppercase":"壹佰圆整","amount_evidence":"第二期金额100元（大写：壹佰圆整）。"}'
+        '],"payment_stages":[]}'
+    )
+    outputs = [
+        '{"header":{"contract_name":"测试合同","contract_number":"HT-1","signing_location":"沈阳","signing_date":"2026年7月8日","parties":[{"role":"甲方","name":"客户公司"},{"role":"乙方","name":"我方公司"}]},"signature_parties":[],"sections":[]}',
+        a3_amount,
+        '{"copies":{"total_copies":2,"party_copies":[{"role":"甲方","copies":1},{"role":"乙方","copies":1}]},"attachments_declared":[],"total_declared":0}',
+        '{"checks":[]}',
+    ]
+
+    def fake_invoke(model, messages, response_format=None):
+        return outputs.pop(0), {"total_tokens": 1}
+
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
+            with patch("app.capabilities.contract_review.service.fetch_preset", return_value=None):
+                items = run_review_pipeline(request)
+
+    seq7 = next(item for item in items if item.id == "序号7")
+    assert seq7.result == "FAIL"
+    assert seq7.block_level == "硬阻断"
+    assert "第一期" in (seq7.reason or "")
+    assert "第二期" in (seq7.reason or "")
+    assert (seq7.reason or "").count("大写金额不一致") == 2
+
+
+def test_run_review_pipeline_reports_same_source_once_with_different_labels_and_evidence_lengths():
+    request = ContractReviewRequest(
+        contract_md=(
+            "# 合同\n"
+            "甲方：客户公司\n"
+            "乙方：我方公司\n"
+            "第一条 总金额说明：合同总金额100.00元（大写人民币壹佰圆整）金额条款。\n"
+            "第二条 其他说明。"
+        ),
+        attachments=[],
+    )
+    a3_amount = (
+        '{"currency":"人民币","payment_method":"电汇",'
+        '"total_amount_numeric":"100.00",'
+        '"total_amount_uppercase":"人民币壹佰圆整",'
+        '"total_amount_evidence":"金额100.00元（大写人民币壹佰圆整）金额条款。",'
+        '"total_amount_match":true,'
+        '"amount_pairs":['
+        '{"label":"合同总金额","amount_numeric":"100.00","amount_uppercase":"人民币壹佰圆整","amount_evidence":"合同总金额100.00元（大写人民币壹佰圆整）"}'
+        '],"payment_stages":[]}'
+    )
+    outputs = [
+        '{"header":{"contract_name":"测试合同","contract_number":"HT-1","signing_location":"沈阳","signing_date":"2026年7月8日","parties":[{"role":"甲方","name":"客户公司"},{"role":"乙方","name":"我方公司"}]},"signature_parties":[],"sections":[]}',
+        a3_amount,
+        '{"copies":{"total_copies":2,"party_copies":[{"role":"甲方","copies":1},{"role":"乙方","copies":1}]},"attachments_declared":[],"total_declared":0}',
+        '{"checks":[]}',
+    ]
+
+    def fake_invoke(model, messages, response_format=None):
+        return outputs.pop(0), {"total_tokens": 1}
+
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
+            with patch("app.capabilities.contract_review.service.fetch_preset", return_value=None):
+                items = run_review_pipeline(request)
+
+    seq7 = next(item for item in items if item.id == "序号7")
+    assert seq7.result == "FAIL"
+    assert seq7.reason.count("大写金额不一致") == 1
+    assert "合同总金额" in seq7.reason
+    assert "合同总价大写金额不一致" not in seq7.reason
+
+
+def test_run_review_pipeline_source_keys_do_not_leak_to_checks_or_b4_baseline():
+    request = ContractReviewRequest(
+        contract_md=(
+            "# 合同\n"
+            "甲方：客户公司\n"
+            "乙方：我方公司\n"
+            "合同总金额100.00元（大写人民币壹佰圆整）。"
+        ),
+        attachments=[],
+    )
+    captured_baseline = {}
+    responses = {
+        "a1a_party_extraction": {
+            "header": {
+                "contract_name": "测试合同",
+                "project_name": None,
+                "project_number": None,
+                "contract_number": "HT-1",
+                "signing_location": "沈阳",
+                "signing_date": "2026年7月8日",
+                "parties": [{"role": "甲方", "name": "客户公司"}, {"role": "乙方", "name": "我方公司"}],
+            },
+            "signature_parties": [],
+            "sections": [],
+        },
+        "a3_amount_payment": {
+            "currency": "人民币",
+            "payment_method": "电汇",
+            "total_amount_numeric": "100.00",
+            "total_amount_evidence": "合同总金额100.00元（大写人民币壹佰圆整）。",
+            "contract_overall_evidence": "合同总金额100.00元（大写人民币壹佰圆整）。",
+            "total_amount_uppercase": "人民币壹佰圆整",
+            "total_amount_match": True,
+            "amount_pairs": [
+                {
+                    "label": "合同总金额",
+                    "amount_numeric": "100.00",
+                    "amount_uppercase": "人民币壹佰圆整",
+                    "amount_evidence": "合同总金额100.00元（大写人民币壹佰圆整）。",
+                }
+            ],
+            "payment_stages": [],
+        },
+        "a4_copies_attachments": {
+            "copies": {"total_copies": 2, "party_copies": []},
+            "attachments_declared": [],
+            "total_declared": 0,
+        },
+    }
+
+    def fake_prompt(name, **kwargs):
+        return responses[name]
+
+    def fake_run_b4(resolved_attachments, baseline, metrics=None):
+        captured_baseline.update(baseline)
+        return []
+
+    with patch("app.capabilities.contract_review.service._invoke_json_prompt", side_effect=fake_prompt):
+        with patch("app.capabilities.contract_review.service.identify_our_party", return_value=(None, None)):
+            with patch("app.capabilities.contract_review.service._run_b1", return_value=[]):
+                with patch("app.capabilities.contract_review.service._run_b4", side_effect=fake_run_b4):
+                    result = run_review_pipeline(request)
+
+    seq7 = next(item for item in result.items if item.id == "序号7")
+    assert "_amount_source_keys" not in (seq7.reason or "")
+    assert "amount_payment" in captured_baseline
+    assert "_amount_source_keys" not in captured_baseline["amount_payment"]
+
+
+def test_run_review_pipeline_only_reports_total_amount_when_stages_are_derived_without_evidence():
+    request = ContractReviewRequest(
+        contract_md=(
+            "# 合同\n"
+            "甲方：客户公司\n"
+            "乙方：我方公司\n"
+            "本合同含税总价为10492500.00元（大写：壹仟零肆拾玖万贰仟伍佰圆整）。\n"
+            "付款方式：电汇。付款比例为50%、40%、10%。"
+        ),
+        attachments=[],
+    )
+    outputs = [
+        '{"header":{"contract_name":"测试合同","contract_number":"HT-1","signing_location":"沈阳","signing_date":"2026年7月8日","parties":[{"role":"甲方","name":"客户公司"},{"role":"乙方","name":"我方公司"}]},"signature_parties":[],"sections":[]}',
+        (
+            '{"currency":"人民币","payment_method":"电汇",'
+            '"total_amount_numeric":"10492500.00",'
+            '"total_amount_evidence":"本合同含税总价为10492500.00元（大写：壹仟零肆拾玖万贰仟伍佰圆整）。",'
+            '"total_amount_uppercase":"壹仟零肆拾玖万贰仟伍佰圆整",'
+            '"total_amount_match":true,'
+            '"payment_stages":['
+            '{"stage_name":"第一期","percentage":"50","amount_numeric":"5246250","amount_uppercase":"伍佰贰拾肆万陆仟贰佰伍拾圆整","amount_evidence":"模型推导第一期金额5246250元"},'
+            '{"stage_name":"第二期","percentage":"40","amount_numeric":"4197000","amount_uppercase":"肆佰壹拾玖万柒仟圆整","amount_evidence":"模型推导第二期金额4197000元"},'
+            '{"stage_name":"第三期","percentage":"10","amount_numeric":"1049250","amount_uppercase":"壹佰零肆万玖仟贰佰伍拾圆整","amount_evidence":"模型推导第三期金额1049250元"}'
+            ']}'
+        ),
+        '{"copies":{"total_copies":2,"party_copies":[{"role":"甲方","copies":1},{"role":"乙方","copies":1}]},"attachments_declared":[],"total_declared":0}',
+        '{"checks":[]}',
+    ]
+
+    def fake_invoke(model, messages, response_format=None):
+        return outputs.pop(0), {"total_tokens": 1}
+
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
+            with patch("app.capabilities.contract_review.service.fetch_preset", return_value=None):
+                items = run_review_pipeline(request)
+
+    seq7 = next(item for item in items if item.id == "序号7")
+    seq10 = next(item for item in items if item.id == "序号10")
+
+    assert seq7.result == "FAIL"
+    assert "合同没有明确总金额" in (seq7.reason or "")
+    assert all(stage_name not in (seq7.reason or "") for stage_name in ("第一期", "第二期", "第三期"))
+
+    assert seq10.result == "WARN"
+    assert "第1个付款阶段金额缺失或格式无法识别" in (seq10.reason or "")
+    assert "第2个付款阶段金额缺失或格式无法识别" in (seq10.reason or "")
+    assert "第3个付款阶段金额缺失或格式无法识别" in (seq10.reason or "")
+
+
+def test_run_review_pipeline_still_checks_explicit_stage_amount_pair_in_seq7():
+    request = ContractReviewRequest(
+        contract_md=(
+            "# 合同\n"
+            "甲方：客户公司\n"
+            "乙方：我方公司\n"
+            "本合同含税总价为100元（大写：壹佰元整）。\n"
+            "首付款金额为100元（大写：壹佰圆整），付款比例100%。"
+        ),
+        attachments=[],
+    )
+    outputs = [
+        '{"header":{"contract_name":"测试合同","project_name":null,"project_number":null,"contract_number":"HT-1","signing_location":"沈阳","signing_date":"2026年7月8日","parties":[{"role":"甲方","name":"客户公司"},{"role":"乙方","name":"我方公司"}]},"signature_parties":[{"role":"甲方","name":"客户公司"},{"role":"乙方","name":"我方公司"}],"sections":[]}',
+        (
+            '{"currency":"人民币","payment_method":"电汇",'
+            '"total_amount_numeric":"100",'
+            '"total_amount_evidence":"本合同含税总价为100元（大写：壹佰元整）。",'
+            '"total_amount_uppercase":"壹佰元整",'
+            '"total_amount_match":true,'
+            '"payment_stages":['
+            '{"stage_name":"首付款","percentage":"100","amount_numeric":"100","amount_uppercase":"壹佰圆整","amount_evidence":"首付款金额为100元（大写：壹佰圆整），付款比例100%。"}'
+            ']}'
+        ),
+        '{"copies":{"total_copies":2,"party_copies":[{"role":"甲方","copies":1},{"role":"乙方","copies":1}]},"attachments_declared":[],"total_declared":0}',
+        '{"checks":[]}',
+    ]
+
+    def fake_invoke(model, messages, response_format=None):
+        return outputs.pop(0), {"total_tokens": 1}
+
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
+            with patch("app.capabilities.contract_review.service.fetch_preset", return_value=None):
+                items = run_review_pipeline(request)
+
+    seq7 = next(item for item in items if item.id == "序号7")
+    assert seq7.result == "FAIL"
+    assert "付款阶段（首付款）" in (seq7.reason or "")
+    assert "金额单位错误" in (seq7.reason or "")
 
 
 def test_run_review_pipeline_reports_candidate_when_preset_lookup_misses():

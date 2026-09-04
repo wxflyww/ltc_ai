@@ -1,6 +1,7 @@
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
+from app.capabilities.contract_review.amounts import format_rmb_uppercase
 from app.capabilities.contract_review.schemas import (
     HeaderInfo,
     OurPartyContext,
@@ -245,19 +246,152 @@ def _make_single_check(item_id: str, name: str, hard: list[str], warn: list[str]
     return CheckItem(id=item_id, name=name, result="PASS", block_level="通过", reason=None)
 
 
+def _normalize_uppercase_amount(value) -> str:
+    text = str(value).strip()
+    if text.startswith("人民币"):
+        text = text.removeprefix("人民币").strip()
+    return text
+
+
+def _classify_uppercase_errors(actual_normalized: str) -> list[str]:
+    categories: list[str] = []
+    if "圆" in actual_normalized:
+        categories.append("金额单位错误：应使用元而非圆")
+    if "点" in actual_normalized:
+        categories.append("小数书写错误：应使用角/分表示小数，不应使用点")
+    return categories
+
+
+def _overall_amount_present(a3_result: dict) -> bool:
+    if not is_empty(a3_result.get("total_amount_numeric")) or not is_empty(a3_result.get("total_amount_uppercase")):
+        return True
+    # Also check private recovered candidate (seq7-only, never leaks to seq10/B-4)
+    recovered = a3_result.get("_recovered_total")
+    if isinstance(recovered, dict):
+        if not is_empty(recovered.get("numeric")) or not is_empty(recovered.get("uppercase")):
+            return True
+    return False
+
+
+def _collect_amount_facts(a3_result: dict) -> list[dict]:
+    facts: list[dict] = []
+    source_keys = a3_result.get("_amount_source_keys") if isinstance(a3_result.get("_amount_source_keys"), dict) else {}
+    seen_unique_source_keys: set[str] = set()
+
+    def _add(label: str, numeric_raw, uppercase, evidence, source_key: str | None = None) -> None:
+        if is_empty(evidence):
+            return
+        if is_empty(numeric_raw) and is_empty(uppercase):
+            return
+        if source_key:
+            if source_key in seen_unique_source_keys:
+                return
+            seen_unique_source_keys.add(source_key)
+        facts.append({"label": label, "numeric_raw": numeric_raw, "uppercase": uppercase})
+
+    for index, item in enumerate(a3_result.get("amount_pairs") or [], start=1):
+        if not isinstance(item, dict):
+            continue
+        label = item.get("label") or f"金额{index}"
+        pair_keys = source_keys.get("amount_pairs") if isinstance(source_keys.get("amount_pairs"), list) else []
+        source_key = pair_keys[index - 1] if index - 1 < len(pair_keys) else None
+        _add(
+            str(label),
+            item.get("amount_numeric"),
+            item.get("amount_uppercase"),
+            item.get("amount_evidence"),
+            source_key,
+        )
+
+    _add(
+        "合同总金额",
+        a3_result.get("total_amount_numeric"),
+        a3_result.get("total_amount_uppercase"),
+        a3_result.get("total_amount_evidence"),
+        source_keys.get("total") if isinstance(source_keys.get("total"), str) else None,
+    )
+
+    # Also add private recovered candidate (seq7-only, never leaks to seq10/B-4)
+    recovered = a3_result.get("_recovered_total")
+    if isinstance(recovered, dict):
+        recovered_numeric = recovered.get("numeric")
+        recovered_uppercase = recovered.get("uppercase")
+        recovered_evidence = recovered.get("evidence")
+        recovered_source_key = recovered.get("source_key")
+        if not is_empty(recovered_evidence) and (not is_empty(recovered_numeric) or not is_empty(recovered_uppercase)):
+            _add(
+                "合同总金额",
+                recovered_numeric,
+                recovered_uppercase,
+                recovered_evidence,
+                recovered_source_key if isinstance(recovered_source_key, str) else None,
+            )
+
+    for index, stage in enumerate(a3_result.get("payment_stages") or [], start=1):
+        if not isinstance(stage, dict):
+            continue
+        stage_name = stage.get("stage_name") or f"付款阶段{index}"
+        stage_keys = source_keys.get("payment_stages") if isinstance(source_keys.get("payment_stages"), list) else []
+        source_key = stage_keys[index - 1] if index - 1 < len(stage_keys) else None
+        _add(
+            f"付款阶段（{stage_name}）",
+            stage.get("amount_numeric"),
+            stage.get("amount_uppercase"),
+            stage.get("amount_evidence"),
+            source_key,
+        )
+
+    return facts
+
+
+def _check_amount_fact(fact: dict) -> tuple[str, str] | None:
+    label = fact["label"]
+    numeric_raw = fact["numeric_raw"]
+    uppercase = fact["uppercase"]
+
+    if is_empty(numeric_raw) and is_empty(uppercase):
+        return None
+
+    if not is_empty(numeric_raw) and not is_empty(uppercase):
+        expected_uppercase = format_rmb_uppercase(numeric_raw)
+        if expected_uppercase is None:
+            return "hard", f"{label}小写金额格式无法可靠校验"
+
+        actual_normalized = _normalize_uppercase_amount(uppercase)
+        if actual_normalized == expected_uppercase:
+            return None
+
+        message = f"{label}大写金额不一致：实际大写金额“{uppercase}”，期望大写金额“{expected_uppercase}”"
+        categories = _classify_uppercase_errors(actual_normalized)
+        if categories:
+            message += "；" + "；".join(categories)
+        return "hard", message
+
+    if not is_empty(numeric_raw):
+        return "warn", f"{label}没有对应的大写金额"
+    return "warn", f"{label}没有对应的数字金额"
+
+
 def check_amount_payment(a3_result: dict) -> list[CheckItem]:
     total_numeric = _to_decimal(a3_result.get("total_amount_numeric"))
-    total_uppercase = a3_result.get("total_amount_uppercase")
-    amount_match = a3_result.get("total_amount_match")
     currency = a3_result.get("currency")
     payment_method = a3_result.get("payment_method")
     stages = a3_result.get("payment_stages") or []
 
     seq7_hard: list[str] = []
-    if total_numeric is None or is_empty(total_uppercase):
-        seq7_hard.append("合同总价金额或大写金额缺失，无法校验总价大小写一致性")
-    elif amount_match is False:
-        seq7_hard.append("合同总价大小写金额不一致")
+    seq7_warn: list[str] = []
+    if not _overall_amount_present(a3_result):
+        seq7_hard.append("合同没有明确总金额")
+
+    for fact in _collect_amount_facts(a3_result):
+        problem = _check_amount_fact(fact)
+        if problem is None:
+            continue
+        level, reason = problem
+        if level == "hard":
+            seq7_hard.append(reason)
+        else:
+            seq7_warn.append(reason)
 
     seq8_hard: list[str] = []
     if is_empty(currency):
@@ -292,7 +426,7 @@ def check_amount_payment(a3_result: dict) -> list[CheckItem]:
             seq10_hard.append(f"付款阶段金额合计{sum(stage_amounts)}，与合同总价{total_numeric}不一致")
 
     return [
-        _make_single_check("序号7", "总价大小写一致性", seq7_hard, []),
+        _make_single_check("序号7", "总价大小写一致性", seq7_hard, seq7_warn),
         _make_single_check("序号8", "货币条款", seq8_hard, []),
         _make_single_check("序号9", "付款方式", seq9_hard, []),
         _make_single_check("序号10", "付款阶段校验", seq10_hard, seq10_warn),

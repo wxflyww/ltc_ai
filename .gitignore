@@ -57,6 +57,7 @@ config/config-local-*.yaml
 .codex/
 .github/
 .qoder/
+deploy-to-test.ps1
 extract_md.py
 .tmp-*.patch
 

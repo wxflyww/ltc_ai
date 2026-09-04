@@ -245,3 +245,580 @@ def test_stage_percentage_not_100_fails():
     seq10 = next(item for item in items if item.id == "序号10")
     assert seq10.result == "FAIL"
     assert "不等于100%" in seq10.reason
+
+
+def _amount_payment_result(**overrides):
+    a3_result = {
+        "currency": "人民币",
+        "payment_method": "电汇",
+        "total_amount_numeric": "924528.30",
+        "total_amount_uppercase": "人民币玖拾贰万肆仟伍佰贰拾捌元叁角",
+        "payment_stages": [],
+    }
+    full_text = "合同总价为924528.30元，大写：人民币玖拾贰万肆仟伍佰贰拾捌元叁角。"
+    use_sanitize = bool(overrides.pop("_use_sanitize", False))
+    a3_result.update(overrides)
+    if "_full_text" in a3_result:
+        full_text = str(a3_result.pop("_full_text"))
+    for pair in a3_result.get("amount_pairs") or []:
+        pair.setdefault("amount_evidence", f"合同中明确金额：{pair.get('amount_numeric')}元，大写：{pair.get('amount_uppercase')}。")
+    for stage in a3_result.get("payment_stages") or []:
+        stage.setdefault("amount_evidence", f"合同中明确付款阶段金额：{stage.get('amount_numeric')}元，大写：{stage.get('amount_uppercase')}。")
+    a3_result.setdefault("total_amount_evidence", "合同总价为924528.30元，大写：人民币玖拾贰万肆仟伍佰贰拾捌元叁角。")
+    a3_result.setdefault("contract_overall_evidence", "合同总价为924528.30元，大写：人民币玖拾贰万肆仟伍佰贰拾捌元叁角。")
+    if use_sanitize:
+        from app.capabilities.contract_review.amounts import sanitize_amount_payment_facts
+
+        a3_result = sanitize_amount_payment_facts(a3_result, full_text)
+    return next(item for item in check_amount_payment(a3_result) if item.id == "序号7")
+
+
+def test_seq7_fails_when_model_reports_invalid_uppercase_amount_as_match():
+    item = _amount_payment_result(
+        total_amount_uppercase="人民币玖拾贰万肆仟伍佰贰拾捌点叁圆",
+        total_amount_match=True,
+    )
+
+    assert item.result == "FAIL"
+    assert item.block_level == "硬阻断"
+    assert "金额单位错误" in item.reason
+    assert "小数书写错误" in item.reason
+    assert "人民币玖拾贰万肆仟伍佰贰拾捌点叁圆" in item.reason
+    assert "玖拾贰万肆仟伍佰贰拾捌元叁角" in item.reason
+
+
+def test_seq7_passes_for_correct_uppercase_without_model_boolean():
+    item = _amount_payment_result()
+
+    assert item.result == "PASS"
+    assert item.block_level == "通过"
+
+
+def test_seq7_uses_server_result_when_model_reports_false():
+    item = _amount_payment_result(total_amount_match=False)
+
+    assert item.result == "PASS"
+
+
+def test_seq7_fails_when_uppercase_omits_jiao():
+    item = _amount_payment_result(total_amount_uppercase="人民币玖拾贰万肆仟伍佰贰拾捌元整")
+
+    assert item.result == "FAIL"
+    assert "实际大写金额" in item.reason
+    assert "期望大写金额" in item.reason
+
+
+def test_seq7_fails_for_yuan_character_without_normalizing_it():
+    item = _amount_payment_result(total_amount_uppercase="人民币玖拾贰万肆仟伍佰贰拾捌圆叁角")
+
+    assert item.result == "FAIL"
+    assert "金额单位错误" in item.reason
+    assert "圆叁角" in item.reason
+
+
+def test_seq7_checks_every_amount_pair_and_reports_all_mismatches():
+    item = _amount_payment_result(
+        total_amount_numeric=None,
+        total_amount_uppercase=None,
+        amount_pairs=[
+            {
+                "label": "谈判不含税报价",
+                "amount_numeric": "924528.30",
+                "amount_uppercase": "人民币玖拾贰万肆仟伍佰贰拾捌点叁圆",
+            },
+            {
+                "label": "谈判含税报价",
+                "amount_numeric": "980000",
+                "amount_uppercase": "人民币玖拾捌万圆元",
+            },
+        ],
+    )
+
+    assert item.result == "FAIL"
+    assert item.block_level == "硬阻断"
+    assert "谈判不含税报价" in item.reason
+    assert "谈判含税报价" in item.reason
+    assert "玖拾贰万肆仟伍佰贰拾捌元叁角" in item.reason
+    assert "玖拾捌万元整" in item.reason
+
+
+def test_seq7_classifies_unit_and_decimal_errors_separately():
+    item = _amount_payment_result(
+        amount_pairs=[
+            {
+                "label": "谈判不含税报价",
+                "amount_numeric": "924528.30",
+                "amount_uppercase": "人民币玖拾贰万肆仟伍佰贰拾捌点叁圆",
+            },
+        ],
+    )
+
+    assert item.result == "FAIL"
+    assert "金额单位错误" in item.reason
+    assert "小数书写错误" in item.reason
+
+
+def test_seq7_does_not_deduplicate_same_amount_at_different_business_positions():
+    item = _amount_payment_result(
+        total_amount_numeric=None,
+        total_amount_uppercase=None,
+        amount_pairs=[
+            {
+                "label": "报价一",
+                "amount_numeric": "100",
+                "amount_uppercase": "壹佰圆整",
+                "amount_evidence": "报价一为100元，大写壹佰圆整。",
+            },
+            {
+                "label": "报价二",
+                "amount_numeric": "100",
+                "amount_uppercase": "壹佰圆整",
+                "amount_evidence": "报价二为100元，大写壹佰圆整。",
+            },
+        ],
+    )
+
+    assert item.result == "FAIL"
+    assert "报价一" in item.reason
+    assert "报价二" in item.reason
+
+
+def test_seq7_reconciles_legacy_total_fields_with_the_same_amount_pair_source():
+    evidence = "合同总金额（大写）人民币壹佰圆整（¥100.00）。"
+    item = _amount_payment_result(
+        _use_sanitize=True,
+        _full_text=evidence,
+        total_amount_numeric="100.00",
+        total_amount_uppercase="人民币壹佰圆整",
+        total_amount_evidence=evidence,
+        amount_pairs=[
+            {
+                "label": "合同总金额",
+                "amount_numeric": "100.00",
+                "amount_uppercase": "人民币壹佰圆整",
+                "amount_evidence": evidence,
+            },
+        ],
+    )
+
+    assert item.result == "FAIL"
+    assert item.reason.count("大写金额不一致") == 1
+    assert "合同总金额" in item.reason
+    assert "合同总价大写金额不一致" not in item.reason
+
+
+def test_seq7_deduplicates_amount_pairs_aliases_with_same_single_source_location():
+    shared_evidence = "合同总金额（大写）人民币壹佰圆整（¥100.00）。"
+    item = _amount_payment_result(
+        _use_sanitize=True,
+        _full_text=shared_evidence,
+        total_amount_numeric=None,
+        total_amount_uppercase=None,
+        amount_pairs=[
+            {
+                "label": "合同总金额",
+                "amount_numeric": "100.00",
+                "amount_uppercase": "人民币壹佰圆整",
+                "amount_evidence": shared_evidence,
+            },
+            {
+                "label": "合同总价",
+                "amount_numeric": "100.00",
+                "amount_uppercase": "人民币壹佰圆整",
+                "amount_evidence": shared_evidence,
+            },
+        ],
+    )
+
+    assert item.result == "FAIL"
+    assert item.reason.count("大写金额不一致") == 1
+    assert "合同总金额" in item.reason
+    assert "合同总价大写金额不一致" not in item.reason
+
+
+def test_seq7_keeps_two_business_positions_when_shared_evidence_spans_both_locations():
+    shared_evidence = "第一期金额100元（大写：壹佰圆整）；第二期金额100元（大写：壹佰圆整）。"
+    item = _amount_payment_result(
+        _use_sanitize=True,
+        _full_text=shared_evidence,
+        total_amount_numeric=None,
+        total_amount_uppercase=None,
+        amount_pairs=[
+            {
+                "label": "第一期",
+                "amount_numeric": "100",
+                "amount_uppercase": "人民币壹佰圆整",
+                "amount_evidence": shared_evidence,
+            },
+        ],
+        payment_stages=[
+            {
+                "stage_name": "第二期",
+                "percentage": "50",
+                "amount_numeric": "100",
+                "amount_uppercase": "人民币壹佰圆整",
+                "amount_evidence": shared_evidence,
+            }
+        ],
+    )
+
+    assert item.result == "FAIL"
+    assert "第一期" in item.reason
+    assert "付款阶段（第二期）" in item.reason
+    assert item.reason.count("大写金额不一致") == 2
+
+
+def test_seq7_passes_when_all_amount_pairs_are_correct():
+    item = _amount_payment_result(
+        amount_pairs=[
+            {"label": "谈判不含税报价", "amount_numeric": "924528.30", "amount_uppercase": "玖拾贰万肆仟伍佰贰拾捌元叁角"},
+            {"label": "谈判含税报价", "amount_numeric": "980000", "amount_uppercase": "人民币玖拾捌万元整"},
+        ],
+    )
+
+    assert item.result == "PASS"
+    assert item.block_level == "通过"
+
+
+def test_seq7_checks_payment_stage_amount_pairs():
+    item = _amount_payment_result(
+        payment_stages=[
+            {"stage_name": "首付款", "percentage": "100", "amount_numeric": "924528.30", "amount_uppercase": "玖拾贰万肆仟伍佰贰拾捌点叁圆"},
+        ],
+    )
+
+    assert item.result == "FAIL"
+    assert "首付款" in item.reason
+    assert "玖拾贰万肆仟伍佰贰拾捌元叁角" in item.reason
+
+
+def test_seq7_fails_when_amount_facts_are_missing():
+    numeric_missing = _amount_payment_result(total_amount_numeric=None)
+    uppercase_missing = _amount_payment_result(total_amount_uppercase=None)
+    both_missing = _amount_payment_result(total_amount_numeric=None, total_amount_uppercase=None)
+
+    assert numeric_missing.result == "WARN"
+    assert uppercase_missing.result == "WARN"
+    assert "合同总金额没有对应的数字金额" in numeric_missing.reason
+    assert "合同总金额没有对应的大写金额" in uppercase_missing.reason
+    assert both_missing.result == "FAIL"
+    assert "合同没有明确总金额" in both_missing.reason
+    assert "PDF" not in numeric_missing.reason
+    assert "解析文本断裂" not in numeric_missing.reason
+
+
+def test_seq7_fails_for_unreliable_numeric_amounts():
+    for numeric_amount in ("not-a-number", "-1", "NaN", "Infinity", "1.001"):
+        item = _amount_payment_result(total_amount_numeric=numeric_amount)
+
+        assert item.result == "FAIL"
+        assert item.block_level == "硬阻断"
+        assert "格式无法可靠校验" in item.reason
+
+
+def test_seq7_uses_recovered_overall_amount_and_fails_on_wrong_uppercase():
+    evidence = "合同总金额为4690000元，人民币（大写）肆佰陆拾玖万圆整。"
+    item = _amount_payment_result(
+        _use_sanitize=True,
+        _full_text=evidence,
+        total_amount_numeric=None,
+        total_amount_uppercase=None,
+        total_amount_evidence=None,
+        contract_overall_evidence=evidence,
+    )
+
+    assert item.result == "FAIL"
+    assert item.block_level == "硬阻断"
+    assert "肆佰陆拾玖万圆整" in item.reason
+    assert "肆佰陆拾玖万元整" in item.reason
+    assert "金额单位错误" in item.reason
+
+
+def test_seq7_passes_when_recovered_overall_amount_is_correct():
+    evidence = "合同总金额为4690000元，人民币（大写）肆佰陆拾玖万元整。"
+    item = _amount_payment_result(
+        _use_sanitize=True,
+        _full_text=evidence,
+        total_amount_numeric=None,
+        total_amount_uppercase=None,
+        total_amount_evidence=None,
+        contract_overall_evidence=evidence,
+    )
+
+    assert item.result == "PASS"
+    assert item.block_level == "通过"
+
+
+def test_seq7_warns_when_overall_has_only_numeric_amount():
+    evidence = "合同总金额为4690000元。"
+    item = _amount_payment_result(
+        _use_sanitize=True,
+        _full_text=evidence,
+        total_amount_numeric="4690000",
+        total_amount_uppercase=None,
+        total_amount_evidence=evidence,
+        contract_overall_evidence=evidence,
+    )
+
+    assert item.result == "WARN"
+    assert item.block_level == "提示"
+    assert "合同总金额没有对应的大写金额" in item.reason
+
+
+def test_seq7_warns_when_overall_has_only_uppercase_amount():
+    evidence = "合同总金额（大写）肆佰陆拾玖万元整。"
+    item = _amount_payment_result(
+        _use_sanitize=True,
+        _full_text=evidence,
+        total_amount_numeric=None,
+        total_amount_uppercase="肆佰陆拾玖万元整",
+        total_amount_evidence=evidence,
+        contract_overall_evidence=evidence,
+    )
+
+    assert item.result == "WARN"
+    assert item.block_level == "提示"
+    assert "合同总金额没有对应的数字金额" in item.reason
+
+
+def test_seq7_warns_when_amount_pair_has_only_numeric_amount():
+    overall_evidence = "合同总金额为4690000元，人民币（大写）肆佰陆拾玖万元整。"
+    evidence = "谈判含税报价4690000元。"
+    item = _amount_payment_result(
+        _use_sanitize=True,
+        _full_text=overall_evidence + evidence,
+        total_amount_numeric="4690000",
+        total_amount_uppercase="肆佰陆拾玖万元整",
+        total_amount_evidence=overall_evidence,
+        contract_overall_evidence=overall_evidence,
+        amount_pairs=[
+            {
+                "label": "谈判含税报价",
+                "amount_numeric": "4690000",
+                "amount_uppercase": None,
+                "amount_evidence": evidence,
+            }
+        ],
+    )
+
+    assert item.result == "WARN"
+    assert item.block_level == "提示"
+    assert "谈判含税报价没有对应的大写金额" in item.reason
+
+
+def test_seq7_warns_when_amount_pair_has_only_uppercase_amount():
+    overall_evidence = "合同总金额为4690000元，人民币（大写）肆佰陆拾玖万元整。"
+    evidence = "谈判含税报价（大写）肆佰陆拾玖万元整。"
+    item = _amount_payment_result(
+        _use_sanitize=True,
+        _full_text=overall_evidence + evidence,
+        total_amount_numeric="4690000",
+        total_amount_uppercase="肆佰陆拾玖万元整",
+        total_amount_evidence=overall_evidence,
+        contract_overall_evidence=overall_evidence,
+        amount_pairs=[
+            {
+                "label": "谈判含税报价",
+                "amount_numeric": None,
+                "amount_uppercase": "肆佰陆拾玖万元整",
+                "amount_evidence": evidence,
+            }
+        ],
+    )
+
+    assert item.result == "WARN"
+    assert item.block_level == "提示"
+    assert "谈判含税报价没有对应的数字金额" in item.reason
+
+
+def test_seq7_warns_when_stage_has_only_numeric_amount():
+    overall_evidence = "合同总金额为4690000元，人民币（大写）肆佰陆拾玖万元整。"
+    evidence = "首付款金额为4690000元。"
+    item = _amount_payment_result(
+        _use_sanitize=True,
+        _full_text=overall_evidence + evidence,
+        total_amount_numeric="4690000",
+        total_amount_uppercase="肆佰陆拾玖万元整",
+        total_amount_evidence=overall_evidence,
+        contract_overall_evidence=overall_evidence,
+        payment_stages=[
+            {
+                "stage_name": "首付款",
+                "percentage": "100",
+                "amount_numeric": "4690000",
+                "amount_uppercase": None,
+                "amount_evidence": evidence,
+            }
+        ],
+    )
+
+    assert item.result == "WARN"
+    assert item.block_level == "提示"
+    assert "付款阶段（首付款）没有对应的大写金额" in item.reason
+
+
+def test_seq7_warns_when_stage_has_only_uppercase_amount():
+    overall_evidence = "合同总金额为4690000元，人民币（大写）肆佰陆拾玖万元整。"
+    evidence = "首付款金额（大写）肆佰陆拾玖万元整。"
+    item = _amount_payment_result(
+        _use_sanitize=True,
+        _full_text=overall_evidence + evidence,
+        total_amount_numeric="4690000",
+        total_amount_uppercase="肆佰陆拾玖万元整",
+        total_amount_evidence=overall_evidence,
+        contract_overall_evidence=overall_evidence,
+        payment_stages=[
+            {
+                "stage_name": "首付款",
+                "percentage": "100",
+                "amount_numeric": None,
+                "amount_uppercase": "肆佰陆拾玖万元整",
+                "amount_evidence": evidence,
+            }
+        ],
+    )
+
+    assert item.result == "WARN"
+    assert item.block_level == "提示"
+    assert "付款阶段（首付款）没有对应的数字金额" in item.reason
+
+
+def test_seq7_fails_when_no_overall_amount_and_quote_is_not_labeled_total():
+    evidence = "谈判含税报价4690000元（大写：肆佰陆拾玖万元整）。"
+    item = _amount_payment_result(
+        _use_sanitize=True,
+        _full_text=evidence,
+        total_amount_numeric=None,
+        total_amount_uppercase=None,
+        total_amount_evidence=None,
+        contract_overall_evidence=None,
+        amount_pairs=[
+            {
+                "label": "谈判含税报价",
+                "amount_numeric": "4690000",
+                "amount_uppercase": "肆佰陆拾玖万元整",
+                "amount_evidence": evidence,
+            }
+        ],
+    )
+
+    assert item.result == "FAIL"
+    assert item.block_level == "硬阻断"
+    assert "合同没有明确总金额" in item.reason
+    assert "谈判含税报价" not in item.reason
+    assert "合同总价" not in item.reason
+
+
+def test_seq7_aggregates_fail_over_warn():
+    evidence = "合同总金额为4690000元。"
+    quote_evidence = "谈判含税报价4690000元（大写：肆佰陆拾玖万圆整）。"
+    item = _amount_payment_result(
+        _use_sanitize=True,
+        _full_text=evidence + quote_evidence,
+        total_amount_numeric="4690000",
+        total_amount_uppercase=None,
+        total_amount_evidence=evidence,
+        contract_overall_evidence=evidence,
+        amount_pairs=[
+            {
+                "label": "谈判含税报价",
+                "amount_numeric": "4690000",
+                "amount_uppercase": "肆佰陆拾玖万圆整",
+                "amount_evidence": quote_evidence,
+            }
+        ],
+    )
+
+    assert item.result == "FAIL"
+    assert item.block_level == "硬阻断"
+    assert "谈判含税报价" in item.reason
+
+
+# ---- Regression: recovery is private (seq7-only), seq10/B-4 must not consume it ----
+
+def test_seq10_does_not_consume_recovered_total_amount():
+    """Recovery value must not leak to seq10's total comparison."""
+    evidence = "合同总金额为4690000元，人民币（大写）肆佰陆拾玖万元整。"
+    a3_result = {
+        "currency": "人民币",
+        "payment_method": "电汇",
+        "total_amount_numeric": None,
+        "total_amount_uppercase": None,
+        "total_amount_evidence": None,
+        "contract_overall_evidence": evidence,
+        "payment_stages": [
+            {"stage_name": "首付款", "percentage": "100", "amount_numeric": "4690000", "amount_uppercase": "肆佰陆拾玖万元整", "amount_evidence": evidence},
+        ],
+    }
+    from app.capabilities.contract_review.amounts import sanitize_amount_payment_facts
+
+    sanitized = sanitize_amount_payment_facts(a3_result, evidence)
+    items = check_amount_payment(sanitized)
+
+    seq7 = next(item for item in items if item.id == "序号7")
+    seq10 = next(item for item in items if item.id == "序号10")
+
+    # seq7 uses the private recovered candidate
+    assert seq7.result == "PASS"
+    # seq10 must NOT consume the recovered total (shared total_amount_numeric is None)
+    # Stage is complete (100%, amount present) and no shared total → seq10 PASS, no total comparison
+    assert seq10.result == "PASS"
+    assert "与合同总价" not in (seq10.reason or "")
+
+
+def test_seq10_does_not_compare_stage_sum_against_recovered_total():
+    """Even when stage sum differs from recovered total, seq10 must not flag it (no shared total)."""
+    evidence = "合同总金额为4690000元，人民币（大写）肆佰陆拾玖万元整。"
+    stage_evidence = "首付款金额999999元，大写玖拾玖万玖仟玖佰玖拾玖元整。"
+    full_text = evidence + stage_evidence
+    a3_result = {
+        "currency": "人民币",
+        "payment_method": "电汇",
+        "total_amount_numeric": None,
+        "total_amount_uppercase": None,
+        "total_amount_evidence": None,
+        "contract_overall_evidence": evidence,
+        "payment_stages": [
+            {"stage_name": "首付款", "percentage": "100", "amount_numeric": "999999", "amount_uppercase": "玖拾玖万玖仟玖佰玖拾玖元整", "amount_evidence": stage_evidence},
+        ],
+    }
+    from app.capabilities.contract_review.amounts import sanitize_amount_payment_facts
+
+    sanitized = sanitize_amount_payment_facts(a3_result, full_text)
+    items = check_amount_payment(sanitized)
+
+    seq10 = next(item for item in items if item.id == "序号10")
+
+    # Stage sum (999999) differs from recovered total (4690000), but seq10 must NOT compare
+    # because shared total_amount_numeric is None (recovery is private to seq7)
+    assert seq10.result == "PASS"
+    assert "与合同总价" not in (seq10.reason or "")
+
+
+def test_seq7_uses_recovered_candidate_but_shared_total_stays_empty():
+    """seq7 can validate the private recovered candidate while shared total fields remain empty."""
+    evidence = "合同总金额为4690000元，人民币（大写）肆佰陆拾玖万圆整。"
+    a3_result = {
+        "currency": "人民币",
+        "payment_method": "电汇",
+        "total_amount_numeric": None,
+        "total_amount_uppercase": None,
+        "total_amount_evidence": None,
+        "contract_overall_evidence": evidence,
+        "payment_stages": [],
+    }
+    from app.capabilities.contract_review.amounts import sanitize_amount_payment_facts
+
+    sanitized = sanitize_amount_payment_facts(a3_result, evidence)
+    items = check_amount_payment(sanitized)
+
+    seq7 = next(item for item in items if item.id == "序号7")
+
+    # Shared fields stay empty (no leak)
+    assert sanitized["total_amount_numeric"] is None
+    assert sanitized["total_amount_uppercase"] is None
+    assert sanitized["total_amount_evidence"] is None
+    assert sanitized["_amount_source_keys"]["total"] is None
+    # seq7 still validates the private recovered candidate (wrong uppercase → FAIL)
+    assert seq7.result == "FAIL"
+    assert "肆佰陆拾玖万圆整" in seq7.reason

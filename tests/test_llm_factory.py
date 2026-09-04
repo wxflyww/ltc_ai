@@ -14,7 +14,7 @@ def test_get_chat_model_returns_base_chat_model(monkeypatch):
         assert m is mock_cls.return_value
         kwargs = mock_cls.call_args.kwargs
         assert kwargs["model"]  # 来自配置
-        assert kwargs["base_url"] == "http://192.168.16.10:8080/v1"
+        assert kwargs["base_url"] == "http://10.105.1.5:4000/v1"
         assert kwargs["api_key"] == "env-llm-key"
 
 

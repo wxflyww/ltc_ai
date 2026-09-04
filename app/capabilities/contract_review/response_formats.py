@@ -122,8 +122,18 @@ RESPONSE_FORMATS: dict[str, dict[str, Any]] = {
                 "payment_method": _nullable_string(),
                 "total_amount_numeric": _nullable_number(),
                 "total_amount_evidence": _nullable_string(),
+                "contract_overall_evidence": _nullable_string(),
                 "total_amount_uppercase": _nullable_string(),
                 "total_amount_match": {"type": ["boolean", "null"]},
+                "amount_pairs": {
+                    "type": "array",
+                    "items": _object({
+                        "label": _nullable_string(),
+                        "amount_numeric": _nullable_number(),
+                        "amount_uppercase": _nullable_string(),
+                        "amount_evidence": _nullable_string(),
+                    }),
+                },
                 "payment_stages": {
                     "type": "array",
                     "items": _object({
@@ -131,6 +141,7 @@ RESPONSE_FORMATS: dict[str, dict[str, Any]] = {
                         "percentage": _nullable_number(),
                         "amount_numeric": _nullable_number(),
                         "amount_uppercase": _nullable_string(),
+                        "amount_evidence": _nullable_string(),
                     }),
                 },
             }),

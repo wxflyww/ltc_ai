@@ -12,6 +12,7 @@ from app.capabilities.contract_review.attachments import (
     check_copies_and_attachments,
     validate_attachment_title_matches,
 )
+from app.capabilities.contract_review.amounts import sanitize_amount_payment_facts
 from app.capabilities.contract_review.checks import (
     build_review_data,
     check_amount_payment,
@@ -1058,6 +1059,7 @@ def run_review_pipeline(request: ContractReviewRequest) -> PipelineResult:
         metric_id="A-3",
         full_text=prepared["full_text"],
     )
+    a3 = sanitize_amount_payment_facts(a3, prepared["full_text"])
     items.extend(check_amount_payment(a3))
 
     a4 = _invoke_json_prompt(

@@ -1,5 +1,6 @@
 # ---- builder ----
-FROM python:3.11-slim AS builder
+#FROM python:3.11-slim AS builder
+FROM docker.m.daocloud.io/python:3.11-slim AS builder
 WORKDIR /build
 COPY pyproject.toml ./
 COPY app/ ./app/
@@ -10,7 +11,8 @@ RUN python -m venv /opt/venv && \
     /opt/venv/bin/pip install --no-cache-dir .
 
 # ---- runtime ----
-FROM python:3.11-slim AS runtime
+#FROM python:3.11-slim AS runtime
+FROM docker.m.daocloud.io/python:3.11-slim
 RUN useradd -m -u 1000 appuser
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH" \
