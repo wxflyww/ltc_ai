@@ -17,6 +17,22 @@ from app.core.errors import ModelFormatError, ModelInputTooLongError, ModelOutpu
 import pytest
 
 
+class _BindableModel:
+    """get_chat_model() 的最小替身：与生产契约一致 —— 返回值必须支持 .bind()。
+
+    生产里 get_chat_model() 返回 ChatOpenAI，service 的关思考绑定会调用 model.bind(...)。
+    裸 object() 占位不具备这个契约，故统一用本类替身；断言与语义不变。
+    """
+
+    def __init__(self) -> None:
+        self.kwargs: dict = {}
+
+    def bind(self, **kwargs):
+        clone = _BindableModel()
+        clone.kwargs = dict(kwargs)
+        return clone
+
+
 def test_review_contract_preserves_fail_and_warn_from_checks():
     request = ContractReviewRequest(contract_md="# 合同", attachments=[])
     with patch("app.capabilities.contract_review.service.run_review_pipeline") as fake_pipeline:
@@ -205,7 +221,7 @@ def test_run_review_pipeline_uses_llm_adapter_and_preset_fetch():
     def fake_invoke(model, messages, response_format=None):
         return outputs.pop(0), {"total_tokens": 1}
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
             with patch("app.capabilities.contract_review.service.fetch_preset") as fake_fetch:
                 fake_fetch.return_value = SystemPreset(
@@ -254,7 +270,7 @@ def test_run_review_pipeline_determines_seq7_without_model_match_boolean(
     def fake_invoke(model, messages, response_format=None):
         return outputs.pop(0), {"total_tokens": 1}
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
             with patch("app.capabilities.contract_review.service.fetch_preset", return_value=None):
                 items = run_review_pipeline(request)
@@ -294,7 +310,7 @@ def test_run_review_pipeline_reports_all_amount_pairs_in_seq7():
     def fake_invoke(model, messages, response_format=None):
         return outputs.pop(0), {"total_tokens": 1}
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
             with patch("app.capabilities.contract_review.service.fetch_preset", return_value=None):
                 items = run_review_pipeline(request)
@@ -340,7 +356,7 @@ def test_run_review_pipeline_keeps_two_identical_amount_pairs_at_different_posit
     def fake_invoke(model, messages, response_format=None):
         return outputs.pop(0), {"total_tokens": 1}
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
             with patch("app.capabilities.contract_review.service.fetch_preset", return_value=None):
                 items = run_review_pipeline(request)
@@ -384,7 +400,7 @@ def test_run_review_pipeline_reports_same_source_once_with_different_labels_and_
     def fake_invoke(model, messages, response_format=None):
         return outputs.pop(0), {"total_tokens": 1}
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
             with patch("app.capabilities.contract_review.service.fetch_preset", return_value=None):
                 items = run_review_pipeline(request)
@@ -497,7 +513,7 @@ def test_run_review_pipeline_only_reports_total_amount_when_stages_are_derived_w
     def fake_invoke(model, messages, response_format=None):
         return outputs.pop(0), {"total_tokens": 1}
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
             with patch("app.capabilities.contract_review.service.fetch_preset", return_value=None):
                 items = run_review_pipeline(request)
@@ -545,7 +561,7 @@ def test_run_review_pipeline_still_checks_explicit_stage_amount_pair_in_seq7():
     def fake_invoke(model, messages, response_format=None):
         return outputs.pop(0), {"total_tokens": 1}
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
             with patch("app.capabilities.contract_review.service.fetch_preset", return_value=None):
                 items = run_review_pipeline(request)
@@ -568,7 +584,7 @@ def test_run_review_pipeline_reports_candidate_when_preset_lookup_misses():
     def fake_invoke(model, messages, response_format=None):
         return outputs.pop(0), {"total_tokens": 1}
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
             with patch("app.capabilities.contract_review.service.fetch_preset", return_value=None):
                 items = run_review_pipeline(request)
@@ -607,7 +623,7 @@ def test_run_review_pipeline_sends_embedded_and_uploaded_attachments_to_b4():
             b4_texts.append(content)
         return outputs.pop(0), {"total_tokens": 1}
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
             with patch("app.capabilities.contract_review.service.fetch_preset") as fake_fetch:
                 fake_fetch.return_value = SystemPreset(
@@ -661,7 +677,7 @@ def test_run_review_pipeline_runs_b1_by_contract_and_each_attachment():
             "total_tokens": 11,
         }
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
             with patch("app.capabilities.contract_review.service.fetch_preset") as fake_fetch:
                 fake_fetch.return_value = SystemPreset(
@@ -696,7 +712,7 @@ def test_invoke_json_prompt_retries_once_when_model_returns_non_json():
     def fake_invoke(model, messages, response_format=None):
         return outputs.pop(0), {"total_tokens": 1}
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke) as mocked:
             result = _invoke_json_prompt("a1a_party_extraction", full_text="合同正文")
 
@@ -716,7 +732,7 @@ def test_invoke_json_prompt_passes_json_schema_response_format():
             {"total_tokens": 1},
         )
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
             result = _invoke_json_prompt("a1a_party_extraction", full_text="合同正文")
 
@@ -750,7 +766,7 @@ def test_invoke_json_prompt_retries_when_required_schema_keys_missing():
     def fake_invoke(model, messages, response_format=None):
         return outputs.pop(0), {"total_tokens": 1}
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke) as mocked:
             result = _invoke_json_prompt(
                 "a1a_party_extraction",
@@ -763,7 +779,7 @@ def test_invoke_json_prompt_retries_when_required_schema_keys_missing():
 
 
 def test_invoke_json_prompt_keeps_prompt_name_for_json_parse_error_with_required_keys():
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", return_value=("不是JSON", {"total_tokens": 1})):
             with pytest.raises(ModelFormatError) as exc:
                 _invoke_json_prompt(
@@ -777,7 +793,7 @@ def test_invoke_json_prompt_keeps_prompt_name_for_json_parse_error_with_required
 
 
 def test_invoke_json_prompt_error_message_includes_prompt_name_after_retry_fails():
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", return_value=("不是JSON", {"total_tokens": 1})):
             with pytest.raises(ModelFormatError) as exc:
                 _invoke_json_prompt("a1a_party_extraction", full_text="合同正文")
@@ -792,7 +808,7 @@ def test_invoke_json_prompt_converts_context_length_error_with_label():
             "However, the model's context length is only 16384 tokens."
         )
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
             with pytest.raises(ModelFormatError) as exc:
                 _invoke_json_prompt(
@@ -811,7 +827,7 @@ def test_invoke_json_prompt_converts_tokens_limit_reached_error_with_label():
     def fake_invoke(model, messages, response_format=None):
         raise Exception('{"error":{"code":"tokens_limit_reached","message":"input too long"}}')
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
             with pytest.raises(ModelFormatError) as exc:
                 _invoke_json_prompt(
@@ -833,7 +849,7 @@ def test_invoke_json_prompt_converts_length_finish_reason_error_with_label():
             "- CompletionUsage(completion_tokens=15496, prompt_tokens=888, total_tokens=16384)"
         )
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
             with pytest.raises(ModelFormatError) as exc:
                 _invoke_json_prompt(
@@ -905,7 +921,7 @@ def test_invoke_json_prompt_logs_invoke_error_event(monkeypatch, caplog):
             "- CompletionUsage(completion_tokens=15496, prompt_tokens=888, total_tokens=16384)"
         )
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
             with pytest.raises(ModelFormatError):
                 _invoke_json_prompt(
@@ -949,7 +965,7 @@ def test_invoke_json_prompt_logs_length_completion_diagnostic(monkeypatch, caplo
     caplog.clear()
     caplog.set_level("INFO", logger="contract_review")
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch(
             "app.capabilities.contract_review.service.invoke_model",
             side_effect=FakeLengthFinishReasonError(),
@@ -981,7 +997,7 @@ def test_run_b1_retries_when_reason_is_too_generic():
     def fake_invoke(model, messages, response_format=None):
         return outputs.pop(0), {"total_tokens": 1}
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke) as mocked:
             items = _run_b1("合同正文", [], [], [])
 
@@ -999,7 +1015,7 @@ def test_run_b1_adds_scope_prefix_and_segment_name():
     def fake_invoke(model, messages, response_format=None):
         return outputs.pop(0), {"total_tokens": 1}
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
             items = _run_b1("合同正文", [], [], [])
 
@@ -1019,7 +1035,7 @@ def test_run_b1_deduplicates_same_reason_items():
     def fake_invoke(model, messages, response_format=None):
         return outputs.pop(0), {"total_tokens": 1}
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
             items = _run_b1("合同正文", [], [], [])
 
@@ -1035,7 +1051,7 @@ def test_run_b1_normalizes_legacy_scope_prefix_to_natural_language():
     def fake_invoke(model, messages, response_format=None):
         return outputs.pop(0), {"total_tokens": 1}
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
             items = _run_b1("\u5408\u540c\u6b63\u6587", [], [], [])
 
@@ -1051,7 +1067,7 @@ def test_run_b1_filters_generic_document_nouns_as_noise():
     def fake_invoke(model, messages, response_format=None):
         return outputs.pop(0), {"total_tokens": 1}
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
             items = _run_b1("合同正文", [], [], [])
 
@@ -1068,7 +1084,7 @@ def test_run_b1_reason_is_truncated_to_max_length():
     def fake_invoke(model, messages, response_format=None):
         return outputs.pop(0), {"total_tokens": 1}
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
             items = _run_b1("合同正文", [], [], [])
 
@@ -1087,7 +1103,7 @@ def test_run_b1_converts_tagged_reason_to_natural_language_sentence():
     def fake_invoke(model, messages, response_format=None):
         return outputs.pop(0), {"total_tokens": 1}
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
             items = _run_b1("合同正文", [], [], [])
 
@@ -1109,7 +1125,7 @@ def test_invoke_json_prompt_logs_metadata_output_length(monkeypatch, caplog):
     def fake_invoke(model, messages, response_format=None):
         raise ModelOutputTooLongError("finish_reason=length")
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
             with pytest.raises(ModelOutputTooLongError):
                 _invoke_json_prompt(
@@ -1138,7 +1154,7 @@ def test_run_b1_warns_when_attachment_uses_party_role_without_definition():
     def fake_invoke(model, messages, response_format=None):
         return outputs.pop(0), {"total_tokens": 1}
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
             items = _run_b1(
                 "合同正文",
@@ -1159,7 +1175,7 @@ def test_run_b1_generates_warn_from_verified_structured_observation():
     def fake_invoke(model, messages, response_format=None):
         return outputs.pop(0), {"total_tokens": 1}
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
             items = _run_b1(
                 "卖方应在十日内交付。",
@@ -1181,7 +1197,7 @@ def test_run_b1_ignores_contract_name_observation():
     def fake_invoke(model, messages, response_format=None):
         return outputs.pop(0), {"total_tokens": 1}
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
             items = _run_b1(
                 "合同名称：中国移动北京公司2024年项目合同",
@@ -1200,7 +1216,7 @@ def test_run_b1_ignores_cross_scope_evidence():
     def fake_invoke(model, messages, response_format=None):
         return outputs.pop(0), {"total_tokens": 1}
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
             items = _run_b1(
                 "鉴于条款仅引用既有项目。",
@@ -1219,7 +1235,7 @@ def test_run_b1_accepts_alias_declared_in_header_party():
     def fake_invoke(model, messages, response_format=None):
         return outputs.pop(0), {"total_tokens": 1}
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
             items = _run_b1(
                 "北京移动应在验收后付款。",
@@ -1252,7 +1268,7 @@ def test_run_b1_warns_when_attachment_party_definition_differs_from_contract():
     def fake_invoke(model, messages, response_format=None):
         return outputs.pop(0), {"total_tokens": 1}
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
             items = _run_b1(
                 "合同正文",
@@ -1274,7 +1290,7 @@ def test_run_b1_passes_when_attachment_party_definition_matches_declared_alias()
     def fake_invoke(model, messages, response_format=None):
         return outputs.pop(0), {"total_tokens": 1}
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
             items = _run_b1(
                 "合同正文",
@@ -1294,7 +1310,7 @@ def test_run_b1_legacy_pass_without_reason_keeps_reason_none():
     def fake_invoke(model, messages, response_format=None):
         return outputs.pop(0), {"total_tokens": 1}
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
             items = _run_b1("合同正文", [], [])
 
@@ -1317,7 +1333,7 @@ def test_b4_amount_mismatch_uses_verified_contract_and_attachment_evidence():
     def fake_invoke(model, messages, response_format=None):
         return outputs.pop(0), {"total_tokens": 1}
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
             items = _run_b4(
                 [{"title": "附件1", "text": "附件含税总价为3286000元。"}],
@@ -1340,7 +1356,7 @@ def test_b4_ignores_amount_mismatch_without_current_attachment_evidence():
     def fake_invoke(model, messages, response_format=None):
         return outputs.pop(0), {"total_tokens": 1}
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
             items = _run_b4(
                 [{"title": "附件1", "text": "附件含税总价为3286000元。"}],
@@ -1356,7 +1372,7 @@ def test_b4_normalizes_pass_block_level_from_result():
     def fake_invoke(model, messages, response_format=None):
         return outputs.pop(0), {"total_tokens": 1}
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
             items = _run_b4([{"title": "附件3", "text": "保密条款"}], {})
 
@@ -1369,7 +1385,7 @@ def test_b4_ignores_unstructured_amount_claim_without_evidence():
     def fake_invoke(model, messages, response_format=None):
         return outputs.pop(0), {"total_tokens": 1}
 
-    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+    with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
         with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
             items = _run_b4([{"title": "附件1", "text": "附件价格清单"}], {})
 

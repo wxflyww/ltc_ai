@@ -14,6 +14,22 @@ from app.capabilities.contract_review.service import (
 from app.core.errors import ModelFormatError
 
 
+class _BindableModel:
+    """get_chat_model() 的最小替身：与生产契约一致 —— 返回值必须支持 .bind()。
+
+    生产里 get_chat_model() 返回 ChatOpenAI，service 的关思考绑定会调用 model.bind(...)。
+    裸 object() 占位不具备这个契约，故统一用本类替身；断言与语义不变。
+    """
+
+    def __init__(self) -> None:
+        self.kwargs: dict = {}
+
+    def bind(self, **kwargs):
+        clone = _BindableModel()
+        clone.kwargs = dict(kwargs)
+        return clone
+
+
 # ---------------------------------------------------------------------------
 # 1. B-1 Schema 约束
 # ---------------------------------------------------------------------------
@@ -152,7 +168,7 @@ class TestB1Regression:
         def fake_invoke(model, messages, response_format=None):
             return outputs.pop(0), {"total_tokens": 1}
 
-        with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
             with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
                 items = _run_b1(
                     "甲方：客户公司\n乙方：我方公司",
@@ -172,7 +188,7 @@ class TestB1Regression:
         def fake_invoke(model, messages, response_format=None):
             return outputs.pop(0), {"total_tokens": 1}
 
-        with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
             with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
                 items = _run_b1(
                     "合同正文",
@@ -195,7 +211,7 @@ class TestB1Regression:
         def fake_invoke(model, messages, response_format=None):
             return outputs.pop(0), {"total_tokens": 1}
 
-        with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
             with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
                 items = _run_b1(
                     "吉利座舱中心负责本次项目开发。",
@@ -237,7 +253,7 @@ class TestB1Regression:
         def fake_invoke(model, messages, response_format=None):
             return outputs.pop(0), {"total_tokens": 1}
 
-        with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
             with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
                 items = _run_b1(
                     "客户应付款。供应商X应交付。甲方公司确认。乙方公司同意。",
@@ -263,7 +279,7 @@ class TestB1Regression:
         def fake_invoke(model, messages, response_format=None):
             return outputs.pop(0), {"total_tokens": 1}
 
-        with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
             with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
                 items = _run_b1("合同正文", [], [])
 
@@ -285,7 +301,7 @@ class TestB4Regression:
         def fake_invoke(model, messages, response_format=None):
             return outputs.pop(0), {"total_tokens": 1}
 
-        with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
             with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
                 items = _run_b4(
                     [{"title": "附件1", "text": "附件总价100元。"}],
@@ -302,7 +318,7 @@ class TestB4Regression:
         def fake_invoke(model, messages, response_format=None):
             return outputs.pop(0), {"total_tokens": 1}
 
-        with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
             with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
                 items = _run_b4(
                     [{"title": "附件1", "text": "附件总价100元。"}],
@@ -325,7 +341,7 @@ class TestB4Regression:
         def fake_invoke(model, messages, response_format=None):
             return outputs.pop(0), {"total_tokens": 1}
 
-        with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
             with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
                 items = _run_b4(
                     [{"title": "附件1", "text": "附件总价200元。"}],
@@ -341,7 +357,7 @@ class TestB4Regression:
         def fake_invoke(model, messages, response_format=None):
             return outputs.pop(0), {"total_tokens": 1}
 
-        with patch("app.capabilities.contract_review.service.get_chat_model", return_value=object()):
+        with patch("app.capabilities.contract_review.service.get_chat_model", return_value=_BindableModel()):
             with patch("app.capabilities.contract_review.service.invoke_model", side_effect=fake_invoke):
                 items = _run_b4([{"title": "附件1", "text": "附件内容"}], {})
 

@@ -22,6 +22,7 @@ class LlmSettings(BaseModel):
     temperature: float = 0.1
     timeout: int = 30
     api_key: str = ""
+    disable_thinking: bool = True
 
 
 class AuthSettings(BaseModel):

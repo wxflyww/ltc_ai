@@ -1,5 +1,6 @@
 from fastapi import APIRouter, File, UploadFile
 
+from app.capabilities.contract_review.prefill_service import run_prefill
 from app.capabilities.contract_review.schemas import AttachmentInput, ContractReviewRequest
 from app.capabilities.contract_review.service import review_contract
 from app.core.errors import ValidationError
@@ -10,7 +11,10 @@ router = APIRouter(prefix="/api/v1", tags=["contract-review"])
 
 @router.post("/contract-review")
 def contract_review_endpoint(request: ContractReviewRequest) -> dict:
-    data = review_contract(request)
+    if request.mode == "prefill":
+        data = run_prefill(request)
+    else:
+        data = review_contract(request)
     body = ApiResponse(data=data).to_dict()
     body.setdefault("traceId", "")
     body.setdefault("duration_seconds", 0.0)

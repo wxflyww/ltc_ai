@@ -53,3 +53,18 @@ def test_prod_env_uses_prod_yaml(monkeypatch):
     assert settings.app.env == "prod"
     assert settings.llm.base_url == "http://192.168.16.10:8080/v1"
     assert settings.server.log_level == "WARNING"
+
+
+def test_llm_disable_thinking_defaults_true(monkeypatch):
+    monkeypatch.setenv("LTC_ENV", "dev")
+    _reset_settings()
+    settings = get_settings()
+    assert settings.llm.disable_thinking is True
+
+
+def test_llm_disable_thinking_env_override(monkeypatch):
+    monkeypatch.setenv("LTC_ENV", "dev")
+    monkeypatch.setenv("LTC__LLM__DISABLE_THINKING", "false")
+    _reset_settings()
+    settings = get_settings()
+    assert settings.llm.disable_thinking is False

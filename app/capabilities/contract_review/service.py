@@ -281,6 +281,21 @@ def _require_keys(payload: dict, keys: list[str], prompt_name: str) -> None:
         raise ModelFormatError(f"{prompt_name}模型输出缺少字段：{', '.join(missing)}")
 
 
+_THINKING_OFF_EXTRA_BODY = {"chat_template_kwargs": {"enable_thinking": False}}
+
+
+def _model_for_json_prompt():
+    """返回用于 JSON 抽取的模型；开关开启时绑定 enable_thinking=false。
+
+    只在本能力自身的调用点绑定。model.bind 返回新对象、不污染 get_chat_model() 单例，
+    故 two_stage 与 translate 的调用形态与取值均不受影响（已实测，见 change 任务 3.5）。
+    """
+    model = get_chat_model()
+    if not get_settings().llm.disable_thinking:
+        return model
+    return model.bind(extra_body=dict(_THINKING_OFF_EXTRA_BODY))
+
+
 def _invoke_json_prompt(
     prompt_name: str,
     *,
@@ -289,11 +304,13 @@ def _invoke_json_prompt(
     metrics: list[CheckMetric] | None = None,
     metric_id: str | None = None,
     metric_name: str | None = None,
+    response_format: dict | None = None,
     **kwargs,
 ) -> dict:
-    model = get_chat_model()
+    model = _model_for_json_prompt()
     messages = build_prompt(prompt_name, **kwargs)
-    response_format = get_response_format(prompt_name)
+    if response_format is None:
+        response_format = get_response_format(prompt_name)
     label = validation_label or metric_id or prompt_name
     _log_llm_trace(
         "invoke_json_prompt_request",

@@ -18,6 +18,8 @@ class AttachmentInput(BaseModel):
 class ContractReviewRequest(BaseModel):
     contract_md: str = Field(..., min_length=1)
     attachments: list[AttachmentInput] = Field(default_factory=list)
+    mode: Literal["review", "prefill"] = "review"
+    prefill_scope: Literal["all", "d02", "d03"] = "all"
 
 
 class CheckItem(BaseModel):

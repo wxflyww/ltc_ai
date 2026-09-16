@@ -19,11 +19,57 @@ function Write-Section {
     Write-Host "=== $Text ===" -ForegroundColor Cyan
 }
 
-function Ensure-OpenSpec {
+# Wrapper for native command calls.
+# openspec CLI and git write progress/hints to stderr. Under
+# $ErrorActionPreference = "Stop" PowerShell turns that stderr into a terminating
+# error and aborts the script (symptom: change dir created, the three docs not
+# generated). This wrapper lowers ErrorActionPreference to Continue temporarily
+# and prints stderr lines as normal output.
+# NOTE: keep this file ASCII-only. Windows PowerShell 5.1 reads a BOM-less file
+# with the ANSI codepage, so non-ASCII characters break lexing.
+function Invoke-External {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Command,
+
+        [string[]]$Arguments = @(),
+
+        [switch]$Quiet
+    )
+
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $global:LASTEXITCODE = 0
+    $code = 1
     try {
-        $null = & openspec.cmd --version
+        $output = & $Command @Arguments 2>&1
+        $code = $global:LASTEXITCODE
+        if ($null -eq $code) { $code = 0 }
+        if (-not $Quiet -and $null -ne $output) {
+            foreach ($line in $output) {
+                if ($line -is [System.Management.Automation.ErrorRecord]) {
+                    Write-Host $line.Exception.Message
+                }
+                else {
+                    Write-Host $line
+                }
+            }
+        }
     }
     catch {
+        if (-not $Quiet) { Write-Host $_.Exception.Message }
+        $code = 1
+    }
+    finally {
+        $ErrorActionPreference = $previous
+    }
+
+    return $code
+}
+
+function Ensure-OpenSpec {
+    $code = Invoke-External -Command "openspec.cmd" -Arguments @("--version") -Quiet
+    if ($code -ne 0) {
         throw "openspec.cmd is not available. Install OpenSpec CLI and ensure it is in PATH."
     }
 }
@@ -131,7 +177,11 @@ function Run-Propose {
     $name = Ensure-ChangeName
 
     Write-Section "Create Change"
-    & openspec.cmd new change $name
+    $newCode = Invoke-External -Command "openspec.cmd" -Arguments @("new", "change", $name)
+    if ($newCode -ne 0) {
+        Write-Host ""
+        Write-Host "Change '$name' already exists or was not created. Skipping openspec new and scaffolding the docs." -ForegroundColor Yellow
+    }
 
     $changeDir = Join-Path -Path "openspec/changes" -ChildPath $name
     $proposalPath = Join-Path $changeDir "proposal.md"
@@ -198,10 +248,14 @@ function Run-Validate {
     }
 
     Write-Section "OpenSpec Validate"
-    & openspec.cmd validate $ChangeName --strict
+    $code = Invoke-External -Command "openspec.cmd" -Arguments @("validate", $ChangeName, "--strict")
 
     Write-Section "Git Scope"
-    & git status --short openspec docs/superpowers scripts .agents
+    $null = Invoke-External -Command "git" -Arguments @("status", "--short", "openspec", "docs/superpowers", "scripts", ".agents")
+
+    if ($code -ne 0) {
+        throw "OpenSpec strict validation failed for change: $ChangeName"
+    }
 }
 
 switch ($Mode) {
