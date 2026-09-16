@@ -14,26 +14,30 @@
 
 ## 3. header 与 parties 事实域
 
-- [ ] 3.1 为合同/项目身份整组保留、名称 `specificity`、编号不串组、签订地点城市候选、日期 ISO 规范化及非首部来源排除编写 `header` 失败测试
-- [ ] 3.2 实现 `HeaderFacts` 强类型 Schema、候选提取/规范化、证据装配和只覆盖 `main` 的状态聚合，不生成 `identity_basis` 或正式等级
-- [ ] 3.3 为多方合同、多称谓、空主体栏、正文/附件 observation、附件本地定义、主体候选和不限制三条结果编写 `parties` 失败测试
-- [ ] 3.4 实现 `PartiesFacts` 强类型 Schema 和提取器，保证只有主合同定义区建立 canonical parties，附件/正文只形成 mentions 且不能修改主合同基准
+- [x] 3.1 为合同/项目身份整组保留、名称 `specificity`、编号不串组、签订地点城市候选、日期 ISO 规范化及非首部来源排除编写 `header` 失败测试
+- [x] 3.2 实现 `HeaderFacts` 强类型 Schema、候选提取/规范化、证据装配和只覆盖 `main` 的状态聚合，不生成 `identity_basis` 或正式等级
+- [x] 3.3 为多方合同、多称谓、空主体栏、正文/附件 observation、附件本地定义、主体候选和不限制三条结果编写 `parties` 失败测试
+- [x] 3.4 实现 `PartiesFacts` 强类型 Schema 和提取器，保证只有主合同定义区建立 canonical parties，附件/正文只形成 mentions 且不能修改主合同基准
 
 ## 4. signature 事实域
 
-- [ ] 4.1 为真实签章块语义边界、并列表格按主体拆块、跨页连续块、块外账户/联系观察和逐文档 0/N 签章事实编写失败测试
-- [ ] 4.2 实现签章块、签署人栏位、替代组、签署人候选、身份证号候选、签署日期和字段观察的强类型 Schema 与稳定引用
-- [ ] 4.3 为一栏多人、多栏替代组、多号直接/块内唯一/不确定关联、无关人员排除和禁止按数组/预设反向配对编写失败测试并实现关系装配
-- [ ] 4.4 为账户三项、公司级联系字段、主体绑定、用途状态、同用途多值、不同用途分离和附件不回填主合同编写失败测试并实现来源局部观察提取
-- [ ] 4.5 为 `main` 与每个附件的 `COMPLETE/PARTIAL/UNAVAILABLE` 组合、受影响事实类别、可靠无签章块和技术失败不降级编写测试并实现 `signature` 覆盖聚合
+- [x] 4.1 为真实签章块语义边界、并列表格按主体拆块、跨页连续块、块外账户/联系观察和逐文档 0/N 签章事实编写失败测试
+- [x] 4.2 实现签章块、签署人栏位、替代组、签署人候选、身份证号候选、签署日期和字段观察的强类型 Schema 与稳定引用
+- [x] 4.3 为一栏多人、多栏替代组、多号直接/块内唯一/不确定关联、无关人员排除、禁止按数组/预设反向配对，以及关系无法唯一解释时 `NeedsConfirmationError` 编写失败测试并实现关系装配
+- [x] 4.4 为账户三项、公司级联系字段、主体绑定、用途状态、同用途多值、不同用途分离、附件不回填主合同，以及证据不足时不得把主体/用途推断为已确认编写失败测试并实现来源局部观察提取
+- [x] 4.5 为 `main` 与每个附件的 `COMPLETE/PARTIAL/UNAVAILABLE` 组合、受影响事实类别、可靠无签章块、全部适用类别来源缺口和技术失败不降级编写测试并实现 `signature` 覆盖聚合
+
+> 状态同步（2026-09-10）：签章组件、强类型 Schema 与独立复核已完成；证据为 `test_prepare_signature.py` 64 passed、`test_context_schemas.py` 67 passed、`tests/two_stage` 328 passed 及严格 OpenSpec 校验。Prepare 服务/API、真实 vLLM、真实合同与生产端点仍未验证。
 
 ## 5. amount_payment、copy_terms 与 attachment_manifest 事实域
 
-- [ ] 5.1 为所有显式金额对象、数字/大写单侧、同值不同位置、币种/税务口径、原文整体金额关系、十进制字符串和可重复付款阶段编写 `amount_payment` 失败测试
-- [ ] 5.2 实现 `AmountPaymentFacts` 强类型 Schema 与主合同提取器，禁止计算阶段金额、比例合计、大写期望值、舍入或尾差调整，并排除附件金额候选
-- [ ] 5.3 为整体总份数原文索引、各方 `EACH/COLLECTIVE/UNCERTAIN` 分配、冲突候选、无总数不推算和附件份数排除编写 `copy_terms` 失败测试并实现强类型提取
-- [ ] 5.4 为正文任意位置附件声明、显式声明总数、上传/内嵌实际来源、无内容标题、一个物理文件 0..N 个逻辑候选和 `LINKED/UNCERTAIN` 关系编写 `attachment_manifest` 失败测试
-- [ ] 5.5 实现 `AttachmentManifestFacts` 强类型提取与关系装配，确保实际来源只引用 `source_snapshot`，且 Prepare 不生成缺失、多余、未关联或标题一致性裁决
+- [x] 5.1 为所有显式金额对象、数字/大写单侧、同值不同位置、币种/税务口径、原文整体金额关系、十进制字符串和可重复付款阶段编写 `amount_payment` 失败测试
+- [x] 5.2 实现 `AmountPaymentFacts` 强类型 Schema 与主合同提取器，禁止计算阶段金额、比例合计、大写期望值、舍入或尾差调整，并排除附件金额候选
+- [x] 5.3 为整体总份数原文索引、各方 `EACH/COLLECTIVE/UNCERTAIN` 分配、冲突候选、无总数不推算和附件份数排除编写 `copy_terms` 失败测试并实现强类型提取
+- [x] 5.4 为正文任意位置附件声明、显式声明总数、上传/内嵌实际来源、无内容标题、一个物理文件 0..N 个逻辑候选和 `LINKED/UNCERTAIN` 关系编写 `attachment_manifest` 失败测试
+- [x] 5.5 实现 `AttachmentManifestFacts` 强类型提取与关系装配，确保实际来源只引用 `source_snapshot`，且 Prepare 不生成缺失、多余、未关联或标题一致性裁决
+
+> 状态同步（2026-09-11）：Task 7 商业三域代码实现阶段已由独立只读复核判定 `READY`。组件/Mock 证据为商业三测试 39 passed、`test_prepare_model.py` 与 `test_prepare_prompts.py` 19 passed、`tests/two_stage` 368 passed，以及严格 OpenSpec 校验通过。Prepare 服务/API、真实 vLLM、真实合同和生产端点均未验证；本状态不授权进入 Task 8、commit、push 或 archive。
 
 ## 6. 输入快照、内嵌附件和重复门禁
 
@@ -53,13 +57,23 @@
 - [ ] 7.4 为可定位的截断、乱码、表格丢列、证据定位缺口与合同内容本身缺失/冲突/语义歧义编写对照测试，实现技术失败、覆盖问题和业务事实三分边界
 - [ ] 7.5 为需求说明书、技术规范书、工作说明书和质量标准四类标准附件的可靠识别、完整清单处理、全文确定性安全扫描、无候选结束、命中后局部提取、目录外/不可靠类型回退普通完整提取以及任一步未完成整请求失败编写测试并实现处理策略；不得运行时自学习或启用未经业务审核的同义名称
 
+  > 2026-09-11 状态说明：Task 8 Step 1–3 的目录识别、边界证明、正文结构、严格 locator 与全文安全扫描已由独立只读复核判定 `READY`（定点 33 passed、两阶段 401 passed）。本项仍未勾选：无候选结束、命中局部提取、整请求失败闭合和服务接线由 Task 9 的唯一 `prepare_service.py` 及其测试承接；Task 8 不创建平行编排器。详见 `DEC-LTC-20260911-004`。
+
 ## 8. 服务、路由、错误和数据保护
 
-- [ ] 8.1 编写 Prepare 服务端到端失败测试，按“输入/规范化→快照/内嵌→重复门禁→六域提取→证据/覆盖→引用/排序→摘要”顺序实现无状态组装服务
-- [ ] 8.2 为 `POST /api/v1/contract-review/prepare` 的成功、422/`10001`、模型调用、超时、格式和未知错误响应编写 API 契约测试，并注册 JSON-only 路由
-- [ ] 8.3 为 Prepare 不接收历史结果、人工放行、预设主数据或额外字段，不生成正式等级/检查键/流程指令编写负向测试
-- [ ] 8.4 为日志、Trace、指标和异常不泄露完整 Markdown、Prompt、证据、身份证号、银行账号或联系值编写审计测试，仅保留调用名、时长、token、重试和状态
-- [ ] 8.5 运行静态导入检查和旧 API 回归，确认新模块不持久化数据、不查询预设、不共享旧请求状态且不改变旧接口结果
+- [x] 8.1 编写 Prepare 服务端到端失败测试，按“输入/规范化→快照/内嵌→重复门禁→六域提取→证据/覆盖→引用/排序→摘要”顺序实现无状态组装服务
+
+  > 2026-09-11 观测说明：上述为必须保持的语义顺序和关键依赖，允许内部组件封装多个相邻阶段；`prepare_contract` 仍是唯一公开入口，不要求运行时逐一暴露十二个阶段或新增阶段追踪接口。服务测试以可观察协作方和最终行为验证，详见 `DEC-LTC-20260911-005`。
+
+  > 2026-09-14 状态同步：Task 9 Service 独立 Gate 为 `READY_WITH_NOTES`；已有证据为 `test_prepare_service.py` 39 passed、`tests/two_stage` 440 passed 与 `openspec.cmd validate contract-review-prepare-api --strict --no-interactive` 有效。仅据此勾选 8.1；Prepare API、真实 vLLM、真实合同、真实 Endpoint 和整个 Prepare DONE 均未验证。
+- [x] 8.2 为 `POST /api/v1/contract-review/prepare` 的成功、422/`10001`、模型调用、超时、格式和未知错误响应编写 API 契约测试，并注册 JSON-only 路由
+- [x] 8.3 为 Prepare 不接收历史结果、人工放行、预设主数据或额外字段，不生成正式等级/检查键/流程指令编写负向测试
+- [x] 8.4 为日志、Trace、指标和异常不泄露完整 Markdown、Prompt、证据、身份证号、银行账号或联系值编写审计测试，仅保留调用名、时长、token、重试和状态
+- [x] 8.5 运行静态导入检查和旧 API 回归，确认新模块不持久化数据、不查询预设、不共享旧请求状态且不改变旧接口结果
+
+  > 2026-09-15 状态同步：M1 Prepare API Closure 经 SITE 取证与 MATERIAL 审计判定 `PASS_WITH_NOTES`。API、日志保护与旧路由回归 18 passed，Prepare Service 39 passed；后续补充的 `APIConnectionError` failure-envelope 定点验证与 Prepare model 测试为 24 passed。该状态只证明 API 契约、错误壳、旧路由隔离和敏感数据保护；不覆盖 9.1—9.6、真实 vLLM、真实合同、真实 Endpoint 或 Prepare DONE。
+
+> 2026-09-15 后续编排：Service 原则上冻结，非阻断 P2、代码美化和无必要重构不进入当前工作。M1 为 HIGH 风险 Prepare API Closure：一次性 API 契约矩阵 → 按执行指南建立最小完整行为验证集 → 集中实现 → API GREEN → 直接回归 → Gate，默认 `AUDIT_TYPE=BOTH`。M2 为 HIGH 风险最小真实 E2E：真实请求 → Prepare API → Prepare Service → 真实 Contract → 真实 vLLM → 真实 Endpoint → Response / Schema / evidence 校验；最小 smoke 仅是第一批真实链路证据，不自动勾选 9.3 或宣布 Prepare DONE。最终 DONE 仍取决于当前 OpenSpec 的完整真实场景验收与最终 Gate。
 
 ## 9. 验证与交付
 

@@ -1,6 +1,7 @@
 from unittest.mock import Mock, patch
 
 import json
+import logging
 import pytest
 from pydantic import ValidationError as PydanticValidationError
 
@@ -278,3 +279,119 @@ def test_exhausted_call_error_does_not_retain_sensitive_source_error(
     assert "SENSITIVE-" not in str(exc_info.value)
     assert exc_info.value.__cause__ is None
     assert exc_info.value.__context__ is None
+
+
+# ---------------------------------------------------------------------------
+# M2-SANITIZED-VALIDATION-ATTRIBUTION-01：ValidationError 只归并为稳定安全码，
+# 不输出原始 loc、未知键名、取值、异常 message 或模型内容。
+# 权威来源：spec「技术失败不得伪装成覆盖不足」「新旧流程和敏感数据保持隔离」。
+# ---------------------------------------------------------------------------
+
+_ATTEMPT_EVENT_MESSAGE = "prepare_model_attempt"
+
+
+def _invoke_until_format_error(outputs: list[tuple[str, dict]]) -> ModelFormatError:
+    with patch("app.capabilities.contract_review.two_stage.prepare_model.get_chat_model", return_value=Mock()):
+        with patch(
+            "app.capabilities.contract_review.two_stage.prepare_model.invoke_model",
+            side_effect=outputs,
+        ):
+            with pytest.raises(ModelFormatError) as exc_info:
+                invoke_typed_prepare_model(
+                    prompt_name="prepare_header_parties_main",
+                    markdown="示例",
+                    scope_label="main",
+                    extraction_input="{}",
+                )
+    return exc_info.value
+
+
+def _attempt_constraint_codes(caplog) -> list[str | None]:
+    return [
+        getattr(record, "validation_constraint", None)
+        for record in caplog.records
+        if record.name == "prepare_model" and record.getMessage() == _ATTEMPT_EVENT_MESSAGE
+    ]
+
+
+@pytest.mark.parametrize(
+    ("mutate_candidate", "expected_code"),
+    [
+        (lambda candidate: candidate.pop("quote"), "MISSING_REQUIRED_FIELD"),
+        (lambda candidate: candidate.update(quote="   "), "BLANK_OR_TOO_SHORT"),
+        (lambda candidate: candidate.update(candidate_kind="NOT_A_CANDIDATE_KIND"), "INVALID_ENUM_VALUE"),
+        (lambda candidate: candidate.update(party_aliases="not-a-list"), "OTHER_SCHEMA_REJECTION"),
+    ],
+    ids=[
+        "missing-required-field",
+        "blank-or-too-short",
+        "invalid-enum-value",
+        "other-schema-rejection",
+    ],
+)
+def test_validation_error_reports_stable_constraint_code(mutate_candidate, expected_code, caplog):
+    candidate = _valid_header_candidate()
+    mutate_candidate(candidate)
+    failing_output = (_mock_model_output([candidate]), {"total_tokens": 3})
+
+    with caplog.at_level(logging.INFO, logger="prepare_model"):
+        exc = _invoke_until_format_error([failing_output, failing_output])
+
+    assert _attempt_constraint_codes(caplog) == [expected_code, expected_code]
+    assert expected_code in str(exc)
+
+
+def test_validation_error_reports_duplicate_candidate_ref_constraint(caplog):
+    candidate = _valid_header_candidate()
+    failing_output = (_mock_model_output([candidate, candidate]), {"total_tokens": 3})
+
+    with caplog.at_level(logging.INFO, logger="prepare_model"):
+        exc = _invoke_until_format_error([failing_output, failing_output])
+
+    assert _attempt_constraint_codes(caplog) == [
+        "DUPLICATE_CANDIDATE_REF",
+        "DUPLICATE_CANDIDATE_REF",
+    ]
+    assert "DUPLICATE_CANDIDATE_REF" in str(exc)
+
+
+def test_validation_error_does_not_leak_unexpected_sensitive_field(caplog):
+    sensitive_key = "SENSITIVE-EXTRA-KEY-321"
+    sensitive_value = "SENSITIVE-EXTRA-VALUE-654"
+    candidate = _valid_header_candidate()
+    candidate[sensitive_key] = sensitive_value
+    failing_output = (_mock_model_output([candidate]), {"total_tokens": 3})
+
+    with caplog.at_level(logging.INFO, logger="prepare_model"):
+        exc = _invoke_until_format_error([failing_output, failing_output])
+
+    assert _attempt_constraint_codes(caplog) == ["UNEXPECTED_FIELD", "UNEXPECTED_FIELD"]
+
+    observed = str(exc) + caplog.text
+    assert sensitive_key not in observed
+    assert sensitive_value not in observed
+
+
+def test_non_validation_failure_does_not_carry_validation_constraint(caplog):
+    with caplog.at_level(logging.INFO, logger="prepare_model"):
+        with patch(
+            "app.capabilities.contract_review.two_stage.prepare_model.get_chat_model",
+            return_value=Mock(),
+        ):
+            with patch(
+                "app.capabilities.contract_review.two_stage.prepare_model.invoke_model",
+                side_effect=ModelTimeoutError("timeout"),
+            ):
+                with patch(
+                    "app.capabilities.contract_review.two_stage.prepare_model._sleep_transient_backoff",
+                    return_value=None,
+                ):
+                    with pytest.raises(ModelTimeoutError):
+                        invoke_typed_prepare_model(
+                            prompt_name="prepare_header_parties_main",
+                            markdown="示例",
+                            scope_label="main",
+                            extraction_input="{}",
+                        )
+
+    assert _attempt_constraint_codes(caplog) == [None, None, None]

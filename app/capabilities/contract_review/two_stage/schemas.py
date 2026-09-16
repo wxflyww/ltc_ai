@@ -454,6 +454,9 @@ class SignatureFacts(_StrictModel):
         signer_slot_keys = {item.signer_slot_key for item in self.signer_slots}
         signer_keys = {item.signer_key for item in self.signer_candidates}
         identity_number_keys = {item.identity_number_key for item in self.identity_number_candidates}
+        signer_slot_blocks = {
+            item.signer_slot_key: item.signature_block_key for item in self.signer_slots
+        }
 
         # signer / identity_number 归属映射：用于校验 slot ownership（cross-slot 引用必须拒绝）
         signer_owner = {item.signer_key: item.signer_slot_key for item in self.signer_candidates}
@@ -487,6 +490,12 @@ class SignatureFacts(_StrictModel):
             for key in group.signer_slot_keys:
                 if key not in signer_slot_keys:
                     raise ValueError(f"alternative_signer_group 引用了不存在的 signer_slot_key: {key}")
+            group_block_keys = {signer_slot_blocks[key] for key in group.signer_slot_keys}
+            if len(group_block_keys) > 1:
+                raise ValueError(
+                    "alternative_signer_group 的 signer_slot_key 必须属于同一 "
+                    "signature_block_key，禁止跨签章块的替代组"
+                )
 
         for signer in self.signer_candidates:
             if signer.signer_slot_key not in signer_slot_keys:

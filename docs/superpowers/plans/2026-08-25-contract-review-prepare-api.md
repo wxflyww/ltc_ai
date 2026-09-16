@@ -1,6 +1,6 @@
 # Contract Review Prepare API Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **执行方式：** 按 `docs/superpowers/playbooks/2026-09-07-prepare-execution-guide.md` 和 `docs/decisions/index.md` 中当前有效的治理决定执行；不在本计划重复维护 DEC 枚举。复用已确认设计、计划和仍有效的验证证据，不默认启动子 Agent。新窗口读取适用 AGENTS 与主控制列出的定点权威位置；同一窗口按变化和任务语义定点重读。每个 Task 完成后停止，由主控制派发下一动作；任务勾选仍须真实证据，不因本次流程调整改变。
 
 **Goal:** 在不改变旧合同评审接口的前提下，实现 JSON-only 的 `POST /api/v1/contract-review/prepare`，将当前合同版本的完整 Markdown 快照转换为可校验、可审计、不含正式裁决的六域强类型 `ReviewContext`。
 
@@ -455,17 +455,17 @@ Expected: PASS；导入图中不存在 `app.capabilities.contract_review.service
 - Create: `app/capabilities/contract_review/two_stage/extract_header_parties.py`
 - Create: `tests/two_stage/test_prepare_header_parties.py`
 
-- [ ] **Step 1: 用模型候选 fixture 编写领域失败测试**
+- [x] **Step 1: 用模型候选 fixture 编写领域失败测试**
 
 覆盖：合同/项目名称编号不串组；generic/specific/uncertain；签订城市 0..N 候选；ISO 日期合法/非法；首部外值不回填 header；多方合同；空主体栏；多称谓；正文/附件 mentions；附件本地定义只形成 mention；候选数量超过 3 不截断。
 
-- [ ] **Step 2: 运行并确认 RED**
+- [x] **Step 2: 运行并确认 RED**
 
 Run: `.venv\Scripts\python.exe -m pytest tests/two_stage/test_prepare_header_parties.py -v`
 
 Expected: FAIL，原因是领域装配器尚不存在。
 
-- [ ] **Step 3: 实现两段式 header/parties 装配**
+- [x] **Step 3: 实现两段式 header/parties 装配**
 
 ```python
 def extract_header_and_main_parties(
@@ -492,15 +492,17 @@ def extract_attachment_party_mentions(
 
 `extraction_ranges=None` 只用于普通附件全文；标准附件必须显式传入安全扫描命中范围，无命中时不调用该函数。模型负责语义候选召回，后端负责日期/字符串规范化、证据定位、稳定键、同坐标去重和候选关系校验。不得用附件候选新增/修改 canonical party，不得生成我方/对方最终分类。
 
-- [ ] **Step 4: 实现域覆盖聚合**
+- [x] **Step 4: 实现域覆盖聚合**
 
 `header.coverage` 永远只有 `main`；`parties.coverage` 包含快照全部文档。可见字段缺失/留空/冲突仍可 `COMPLETE`；仅模型明确返回且证据可定位的源表缺列、乱码或截断才生成 `FactIssue` 并降低对应文档覆盖。
 
-- [ ] **Step 5: 运行并确认 GREEN**
+- [x] **Step 5: 运行并确认 GREEN**
 
 Run: `.venv\Scripts\python.exe -m pytest tests/two_stage/test_prepare_header_parties.py -v`
 
 Expected: PASS；响应结构中无 `identity_basis`、`our_party_key` 或等级字段。
+
+> 提交前范围备注（2026-09-08）：`app/capabilities/contract_review/two_stage/prepare_model.py` 中的 `NeedsConfirmationError` 当前未被使用；本次 Task 5 不修改该项。提交范围审查时须确认它不混入本 Task 提交，或另行以有界任务处理。
 
 ### Task 6: 实现 signature 实体、关系和逐文档覆盖
 
@@ -510,21 +512,21 @@ Expected: PASS；响应结构中无 `identity_basis`、`our_party_key` 或等级
 - Create: `app/capabilities/contract_review/two_stage/extract_signature.py`
 - Create: `tests/two_stage/test_prepare_signature.py`
 
-- [ ] **Step 1: 编写签章结构与关系测试矩阵**
+- [x] **Step 1: 编写签章结构与关系测试矩阵**
 
-至少包含：一个真实块多个栏位；并列表格按主体拆块；跨页连续块；一栏多人；多栏替代组；多人多号 `UNCERTAIN`；直接关联；块内唯一关联；无关人员；签署日期；块外账户/联系；同用途多值；不同用途分离；附件不回填主合同。
+至少包含：一个真实块多个栏位；并列表格按主体拆块；跨页连续块；一栏多人；多栏替代组；多人多号 `UNCERTAIN`；直接关联；块内唯一关联；无关人员；签署日期；块外账户/联系；同用途多值；不同用途分离；附件不回填主合同；以及同角色栏位或关系无法唯一解释时抛出 `NeedsConfirmationError`。
 
-- [ ] **Step 2: 编写所有悬空引用失败测试**
+- [x] **Step 2: 编写所有悬空引用失败测试**
 
 分别破坏 `signature_block_key`、`signer_slot_key`、`signer_key`、`identity_number_key`、`party_key`，断言装配整体失败；不要通过删除坏对象让测试变绿。
 
-- [ ] **Step 3: 运行并确认 RED**
+- [x] **Step 3: 运行并确认 RED**
 
 Run: `.venv\Scripts\python.exe -m pytest tests/two_stage/test_prepare_signature.py -v`
 
 Expected: FAIL，原因是签章装配器尚不存在。
 
-- [ ] **Step 4: 实现每文档独立提取和稳定装配**
+- [x] **Step 4: 实现每文档独立提取和稳定装配**
 
 ```python
 def extract_signature_facts(
@@ -540,17 +542,19 @@ def extract_signature_facts(
     return merge_signature_outputs(outputs)
 ```
 
-一个模型 `candidate_ref` 只在该文档调用内有效。后端按父块/栏位/证据坐标生成公开键，再完成替代组和人证关系重映射。禁止按数组位置、距离或预设值自动配对。
+一个模型 `candidate_ref` 只在该文档调用内有效。后端按父块/栏位/证据坐标生成公开键，再完成替代组和人证关系重映射。禁止按数组位置、距离或预设值自动配对；若可靠证据仍支持多个合理关系解释，抛出 `NeedsConfirmationError` 并停止本次 Prepare，不得靠模型内部标签继续推断。
 
-- [ ] **Step 5: 实现账户与联系观察的块外规则**
+- [x] **Step 5: 实现账户与联系观察的块外规则**
 
-块外来源可省略 `signature_block_key`，但必须保留 `document_key`、主体绑定状态、候选主体、用途状态和证据。只有当前文档原文可靠绑定时才设置 `party_key`；附件观察不得改变主合同观察。
+块外来源可省略 `signature_block_key`，但必须保留 `document_key`、主体绑定状态、候选主体、用途状态和证据。只有当前文档原文可靠绑定时才设置 `party_key`；主体或用途证据不足时保留字段值并使用 `UNBOUND` / `UNCERTAIN`，不得确认关系；附件观察不得改变主合同观察。
 
-- [ ] **Step 6: 实现逐文档覆盖并确认 GREEN**
+- [x] **Step 6: 实现逐文档覆盖并确认 GREEN**
 
 Run: `.venv\Scripts\python.exe -m pytest tests/two_stage/test_prepare_signature.py -v`
 
-Expected: PASS；可靠扫描且没有签章事实的文档为 `COMPLETE`，不是 `UNAVAILABLE`。
+Expected: PASS；可靠扫描且没有签章事实的文档为 `COMPLETE`，不是 `UNAVAILABLE`；可定位来源缺口仅影响部分事实类别为 `PARTIAL`，明确影响全部适用签章类别才为 `UNAVAILABLE`。
+
+> 状态同步（2026-09-10）：Task 6 签章代码实现阶段已由独立只读复核判定 `READY`。组件与强类型 Schema 证据为签章定点 64 passed、Schema 定点 67 passed、两阶段回归 328 passed 及严格 OpenSpec 校验通过。Prepare 服务/API、真实 vLLM、真实合同和生产端点均未验证；本状态不授权进入 Task 7、commit、push 或 archive。
 
 ### Task 7: 实现金额付款、份数和附件清单
 
@@ -562,56 +566,64 @@ Expected: PASS；可靠扫描且没有签章事实的文档为 `COMPLETE`，不�
 - Create: `tests/two_stage/test_prepare_copy_terms.py`
 - Create: `tests/two_stage/test_prepare_attachment_manifest.py`
 
-- [ ] **Step 1: 编写 amount_payment 测试并锁死“不计算”边界**
+> 已确认内部接口（2026-09-10；2026-09-11 澄清）：唯一入口为 `extract_amount_copy_manifest(documents: PreparedDocuments, canonical_parties, evidence, extraction_ranges=None) -> CommercialFactDomains`，承载三个商业 `FactDomain`。每次 `prepare_attachment_document` 的 `extraction_input` 固定提供 `extraction_ranges`（无范围为 `[]`）、当前 `document_key` 和仅来自 `source_snapshot.attachments` 的已排序可选目标键；后端仍拒绝快照外目标及 `candidate_ref` 充当目标。无可信可定位引文的 source gap 以固定错误码、文档键和排序后的受影响类别生成稳定键并合并同坐标问题，不使用模型文案。实现前必须先将 RED 测试由多入口/双返回形态兼容收敛为此入口；GREEN 批次同时闭合 Prompt、候选 Schema、响应 Schema、装配、证据/coverage、稳定键与测试。详见 `DEC-LTC-20260910-003`、`DEC-LTC-20260911-001`。
+
+- [x] **Step 1: 编写 amount_payment 测试并锁死“不计算”边界**
 
 测试包含所有显式金额、数字/大写单侧、同值不同位置、币种、税务口径、原文明示整体关系、重复阶段、十进制字符串。增加负向断言：不得出现期望阶段金额、比例合计、差额、舍入、尾差吸收或自动生成的大写金额；附件金额不得进入本域。
 
-- [ ] **Step 2: 编写 copy_terms 测试**
+- [x] **Step 2: 编写 copy_terms 测试**
 
 覆盖原文明示整体总数索引、各方 `EACH/COLLECTIVE/UNCERTAIN`、冲突陈述、无整体总数时不推算、附件份数排除、`overall_total_statement_key` 悬空失败。
 
-- [ ] **Step 3: 编写 attachment_manifest 测试**
+- [x] **Step 3: 编写 attachment_manifest 测试**
 
 覆盖主合同任意位置声明、声明总数、上传/内嵌实际来源、标题无正文不形成来源、一个物理文件多个逻辑候选、`LINKED/UNCERTAIN` 基数和无关系不造记录。负向断言不得出现 `MISSING/EXTRA/NO_LINK_ESTABLISHED` 或标题一致性结论。
 
-- [ ] **Step 4: 运行三组测试并确认 RED**
+- [x] **Step 4: 运行三组测试并确认 RED**
 
 Run: `.venv\Scripts\python.exe -m pytest tests/two_stage/test_prepare_amount_payment.py tests/two_stage/test_prepare_copy_terms.py tests/two_stage/test_prepare_attachment_manifest.py -v`
 
 Expected: FAIL，原因是商业事实装配器尚不存在。
 
-- [ ] **Step 5: 实现主合同商业事实提取**
+- [x] **Step 5: 实现主合同商业事实提取**
 
 金额 `normalized_value` 用已验证的十进制字符串，不转换为 float；只规范化数字表示，不更改原文大写字符。`CONTRACT_OVERALL` 必须有独立原文关系证据。PaymentStage 只引用已存在的 amount/payment method 键。
 
-- [ ] **Step 6: 实现份数和附件清单装配**
+- [x] **Step 6: 实现份数和附件清单装配**
 
 份数总值只通过 `overall_total_statement_key` 指向原文明示 statement。附件实际集合只读 `source_snapshot.attachments`；manifest 不复制附件哈希/身份；逻辑候选只引用父文档和局部范围，不增加实际附件数量。
 
-- [ ] **Step 7: 运行并确认 GREEN**
+- [x] **Step 7: 运行并确认 GREEN**
 
 Run: `.venv\Scripts\python.exe -m pytest tests/two_stage/test_prepare_amount_payment.py tests/two_stage/test_prepare_copy_terms.py tests/two_stage/test_prepare_attachment_manifest.py -v`
 
 Expected: PASS；搜索返回 payload 不包含被禁止的派生计算或裁决字段。
 
+> 状态同步（2026-09-11）：Task 7 商业三域代码实现阶段经独立只读复核判定 `READY`。组件/Mock 证据为商业三测试 39 passed、模型与 Prompt 定点 19 passed、两阶段回归 368 passed及严格 OpenSpec 校验通过。服务/API、真实 vLLM、真实合同和生产端点仍未验证；本状态不授权进入 Task 8、commit、push 或 archive。
+
 ### Task 8: 四类标准附件安全扫描与局部提取
 
 **OpenSpec mapping:** 7.5
+
+> 已确认扫描资格（2026-09-11）：`build_standard_attachment_scan_plan` 以 `PreparedDocuments` 和 `document_key` 派生边界可靠性；上传附件须同时存在于快照与 Markdown 映射，内嵌附件还须验证 `source_locator` 的主文切片一致性。无法证明时返回 `None` 并走普通完整提取，不接收调用方/模型标记。计划的两个 locator 字段固定为 `MarkdownCharLocator`。详见 `DEC-LTC-20260911-002`。
+
+> 已确认正文结构（2026-09-11）：标准附件的结构交叉印证仅在规范化 Markdown 存在非身份元数据的 `##` 至 `######` 正文标题，且该标题后有非空、非身份元数据正文时成立。任何 H1 不计作正文分节；首期不兼容中文编号段落标题。不满足时返回 `None` 并走普通完整提取。详见 `DEC-LTC-20260911-003`。
 
 **Files:**
 - Create: `app/capabilities/contract_review/two_stage/long_document.py`
 - Create: `tests/two_stage/test_prepare_long_document.py`
 - Modify: `app/capabilities/contract_review/two_stage/prepare_service.py`
 
-- [ ] **Step 1: 编写标准附件目录和可靠识别测试**
+- [x] **Step 1: 编写标准附件目录和可靠识别测试**
 
 首期目录固定为需求说明书、技术规范书、工作说明书和质量标准四类；当前已批准同义名称集合为空，未来只能通过业务确认和版本化变更增加。测试必须证明：文件名单独命中不够；内部文档身份、可靠边界和结构交叉印证且无冲突时才进入标准路径；补充协议、商务协议、目录外类型、身份冲突和边界不可靠均回退普通完整提取；不得由模型或运行时统计扩充目录。
 
-- [ ] **Step 2: 编写全文安全扫描召回测试**
+- [x] **Step 2: 编写全文安全扫描召回测试**
 
 固定测试向量覆盖主体定义与称谓、正文中的“甲方/乙方应……”、签署区、法人/授权人、人员与身份证号关系、签署日期、银行/账户/户名、地址/电话/传真/网站/邮编。扫描器必须遍历规范化 Markdown 全文并输出带绝对字符坐标的 0..N 个候选窗口；不得把单纯技术指标、功能需求或质量指标当作待展开候选。
 
-- [ ] **Step 3: 实现目录分类和安全扫描计划**
+- [x] **Step 3: 实现目录分类和安全扫描计划**
 
 ```python
 STANDARD_ATTACHMENT_TYPES = frozenset({
@@ -632,8 +644,12 @@ class SafetyScanPlan(_StrictModel):
 
 
 def build_standard_attachment_scan_plan(
-    document: PreparedDocument,
+    documents: PreparedDocuments,
+    document_key: DocumentKey,
 ) -> SafetyScanPlan | None:
+    document = resolve_scannable_attachment(documents, document_key)
+    if document is None:
+        return None
     standard_type = classify_standard_attachment(document)
     if standard_type is None:
         return None
@@ -653,15 +669,17 @@ def build_standard_attachment_scan_plan(
 
 扫描候选窗口必须是规范化 Markdown 的精确切片并保留绝对坐标。窗口重叠时合并范围；不得更改原文或用候选数组序号生成公开键。
 
-- [ ] **Step 4: 编写无候选、命中局部提取和失败闭合测试**
+> 状态同步（2026-09-11）：Task 8 Step 1–3 已由独立只读复核判定 `READY`。组件/契约证据为 `test_prepare_long_document.py` 33 passed、`tests/two_stage` 401 passed及严格 OpenSpec 校验通过。服务/API、真实 vLLM、真实合同和生产端点仍未验证；局部提取与失败闭合尚待 Step 4–5，因此不勾选 OpenSpec 7.5，不授权 commit、push 或 archive。
 
-安全扫描无候选时，不调用该附件的全文 LLM 提取，仍保留清单并将相关域聚合为 `COMPLETE` 空事实。命中时只对每个合并后的候选范围调用适用的 `parties/signature` 提取器；相邻窗口返回同一事实时按最终证据坐标去重。同值但不同位置仍保留。扫描、范围定位、局部调用、证据装配或合并任一步失败时整个 Prepare 请求失败。
+- [ ] **Step 4: 由 Task 9 服务测试承接无候选、命中局部提取和失败闭合**
 
-- [ ] **Step 5: 接入服务并运行标准附件测试**
+该行为只由 Task 9 的 `test_prepare_service.py` 验证：安全扫描无候选时，不调用该附件的全文 LLM 提取，仍保留清单并将相关域聚合为 `COMPLETE` 空事实；命中时只对每个合并后的候选范围调用适用的 `parties/signature` 提取器；相邻窗口返回同一事实时按最终证据坐标去重，同值但不同位置仍保留。扫描、范围定位、局部调用、证据装配或合并任一步失败时整个 Prepare 请求失败。Task 8 不创建平行编排器。
 
-Run: `.venv\Scripts\python.exe -m pytest tests/two_stage/test_prepare_long_document.py -v`
+- [ ] **Step 5: 由 Task 9 唯一服务入口接入并运行标准附件集成测试**
 
-Expected: 全部 PASS；四类标准附件完整进入清单且安全扫描覆盖全文，无候选不展开整份 LLM，命中只提取局部；目录外或识别不可靠附件走普通完整提取。
+Run: `.venv\Scripts\python.exe -m pytest tests/two_stage/test_prepare_long_document.py tests/two_stage/test_prepare_service.py -v`
+
+Expected: 全部 PASS；四类标准附件完整进入清单且安全扫描覆盖全文，无候选不展开整份 LLM，命中只提取局部；目录外或识别不可靠附件走普通完整提取。详见 `DEC-LTC-20260911-004`。
 
 ### Task 9: 无状态 Prepare 服务装配
 
@@ -671,32 +689,19 @@ Expected: 全部 PASS；四类标准附件完整进入清单且安全扫描覆�
 - Create: `app/capabilities/contract_review/two_stage/prepare_service.py`
 - Create: `tests/two_stage/test_prepare_service.py`
 
-- [ ] **Step 1: 编写固定调用顺序和零共享状态测试**
+- [x] **Step 1: 编写固定调用顺序和零共享状态测试**
 
-测试用 mock 记录阶段顺序，必须精确等于：
-
-```python
-EXPECTED_STAGES = [
-    "normalize_request",
-    "build_source_snapshot",
-    "discover_embedded",
-    "reject_duplicates",
-    "classify_and_scan_standard_attachments",
-    "extract_header_parties",
-    "extract_signature",
-    "extract_amount_copy_manifest",
-    "assemble_evidence_and_coverage",
-    "validate_references",
-    "sort_payload",
-    "compute_hashes",
-]
-```
+测试必须验证既定 Prepare 流程的语义顺序和关键依赖：输入规范化、来源快照/内嵌附件/重复门禁先于领域提取；标准附件分类与扫描先于其局部或全文提取；canonical parties 先于依赖它的附件 party 装配；六域提取先于证据/覆盖聚合、引用验证、稳定排序和摘要计算。允许既有内部组件封装多个相邻逻辑阶段，不要求运行时逐一暴露十二个独立阶段，也不新增调用方可见的阶段追踪接口。测试通过现有可观察协作方与最终行为验证依赖，不凭空锁定新的私有辅助函数名。详见 `DEC-LTC-20260911-005`。
 
 并发/连续两个请求使用不同合同内容时，不得交叉复用 evidence、候选、issue、token 或文档映射。
 
-- [ ] **Step 2: 编写技术失败与覆盖不足对照测试**
+本步骤同时覆盖 Task 8 Step 4 的服务编排：可靠标准附件无扫描候选时，不得调用该附件的全文 `parties/signature` 提取，仍保留附件清单并将相关域聚合为 `COMPLETE` 空事实；扫描命中时只将每个合并后的绝对 locator 范围传给适用提取器，所得事实与证据必须归属该附件；目录外或边界/类型不可靠附件继续全文提取；相邻窗口的同一事实按最终证据坐标去重，同值不同位置保留。
+
+- [x] **Step 2: 编写技术失败与覆盖不足对照测试**
 
 模型超时、调用失败、输出截断、Schema 重试耗尽、证据装配异常、悬空引用、摘要失败都断言没有 `ReviewContext`。只有具有具体文档、事实类别和可验证来源的局部可读性缺口才能生成 `PARTIAL/UNAVAILABLE`。
+
+本步骤同时覆盖 Task 8 Step 4 的失败闭合：安全扫描、范围定位、局部提取或合并任一步失败均使整个 Prepare 请求失败，绝不把未处理范围标记为 `COMPLETE`、`PARTIAL`、`UNAVAILABLE` 或免检。
 
 - [ ] **Step 3: 运行并确认 RED**
 
@@ -704,7 +709,7 @@ Run: `.venv\Scripts\python.exe -m pytest tests/two_stage/test_prepare_service.py
 
 Expected: FAIL，原因是顶层服务尚不存在。
 
-- [ ] **Step 4: 实现唯一公开服务入口**
+- [x] **Step 4: 实现唯一公开服务入口**
 
 ```python
 PIPELINE_VERSION = "contract-review-prepare/1.0.0"
@@ -738,11 +743,20 @@ def prepare_contract(request: PrepareRequest) -> ReviewContext:
 
 服务不得持久化、缓存业务 payload 或回调合同系统。`created_at` 由可注入 clock 提供以便确定性测试；生产默认 UTC 带时区时间。
 
-- [ ] **Step 5: 运行服务测试并确认 GREEN**
+- [x] **Step 5: 运行服务测试并确认 GREEN**
 
 Run: `.venv\Scripts\python.exe -m pytest tests/two_stage/test_prepare_service.py -v`
 
 Expected: PASS；同输入、同模型候选、同 clock 的序列化结果和 digest 完全相同。
+
+> 状态同步（2026-09-14）：Task 9 Service 已由独立 Gate 判定为 `READY_WITH_NOTES`。已有证据：`test_prepare_service.py` 39 passed、`tests/two_stage` 440 passed、`openspec.cmd validate contract-review-prepare-api --strict --no-interactive` 有效。该结论只覆盖无状态服务装配及其已验证的标准附件编排、技术失败闭合、前置重复门禁与最终 Markdown 校验；不覆盖 Prepare API、真实 vLLM、真实合同或真实 Endpoint。历史 RED 输出未在本次状态同步中回填。
+
+### 当前后续编排（2026-09-14）
+
+Task 9 原则上冻结；非阻断 P2、代码美化和无必要重构进入 backlog。只有后续 API 或真实链路发现阻断性问题时，才重新进入 Service 修复。
+
+- **M1 — Prepare API Closure（HIGH）：** 一次性 API 契约矩阵 → 按执行指南建立最小完整行为验证集 → 集中实现 → API GREEN → 直接相关回归 → Gate。M1 GREEN 默认 `AUDIT_TYPE=BOTH`，除非主控制基于权威与风险给出充分降级理由。
+- **M2 — Prepare Minimal Real E2E（HIGH）：** 真实请求 → Prepare API → Prepare Service → 真实 Contract → 真实 vLLM → 真实 Endpoint → Response / Schema / evidence 校验。先取得一条最小真实 smoke；失败后才按失败位置拆诊断。该 smoke 只是第一批真实链路证据，不自动等于 Prepare DONE；最终仍须满足当前 OpenSpec 的完整真实场景验收并通过最终 Gate。
 
 ### Task 10: 注册 JSON-only 路由、错误映射和敏感数据保护
 
@@ -755,7 +769,7 @@ Expected: PASS；同输入、同模型候选、同 clock 的序列化结果和 d
 - Create: `tests/two_stage/test_prepare_logging.py`
 - Modify: `tests/test_contract_review_api.py` only if a regression assertion is needed; do not change existing expectations
 
-- [ ] **Step 1: 编写 API 契约失败测试**
+- [x] **Step 1: 编写 API 契约失败测试**
 
 覆盖成功、FastAPI 422/`10001`、业务输入 `10001`、模型调用 `20001`、超时 `20002`、格式/输出过长 `20003`、未知 `29999`；失败 `data=null`。还要断言 multipart 请求不被当作 Prepare JSON 接受。
 
@@ -769,21 +783,21 @@ def test_prepare_success_data_is_review_context_directly():
     mocked.assert_called_once()
 ```
 
-- [ ] **Step 2: 编写旧路由物理隔离回归测试**
+- [x] **Step 2: 编写旧路由物理隔离回归测试**
 
 Patch 新旧两个 service 入口，分别调用三条 API，断言 `/prepare` 只调用 `prepare_contract`，旧两条路由只调用 `review_contract`；旧请求、结果和 HTTP 期望原样保留。
 
-- [ ] **Step 3: 编写日志泄露测试**
+- [x] **Step 3: 编写日志泄露测试**
 
 构造含完整身份证号、银行账号、电话、Markdown 和独特证据引文的成功与失败请求，捕获 `caplog` 和可写入的审计 sink，断言这些原文都不存在；允许字段仅为调用名、耗时、token、重试次数、状态、错误类型、trace ID。
 
-- [ ] **Step 4: 运行并确认 RED**
+- [x] **Step 4: 运行并确认 RED**
 
 Run: `.venv\Scripts\python.exe -m pytest tests/two_stage/test_prepare_api.py tests/two_stage/test_prepare_logging.py tests/test_contract_review_api.py -v`
 
 Expected: FAIL，原因是新路由尚未注册。
 
-- [ ] **Step 5: 实现独立路由并注册**
+- [x] **Step 5: 实现独立路由并注册**
 
 ```python
 router = APIRouter(prefix="/api/v1/contract-review", tags=["contract-review-prepare"])
@@ -800,11 +814,13 @@ def prepare_contract_endpoint(request: PrepareRequest) -> dict:
 
 `app/main.py` 只增加 `app.include_router(contract_review_prepare_router)`；不要把 Prepare 函数导入旧 router，不要修改旧 endpoint。
 
-- [ ] **Step 6: 运行 API、日志和旧回归并确认 GREEN**
+- [x] **Step 6: 运行 API、日志和旧回归并确认 GREEN**
 
 Run: `.venv\Scripts\python.exe -m pytest tests/two_stage/test_prepare_api.py tests/two_stage/test_prepare_logging.py tests/test_contract_review_api.py -v`
 
 Expected: PASS；普通日志和审计文件不含测试敏感标记。
+
+> 2026-09-15 状态同步：M1 API Closure 已由 SITE 取证和 MATERIAL 审计判定 `PASS_WITH_NOTES`。首轮 API、日志保护和旧路由回归为 18 passed；Prepare Service 为 39 passed；后续 APIConnectionError failure-envelope 补证与 Prepare model 定点验证为 24 passed。M1 只完成 API 契约闭环，不替代 M2 的真实 vLLM、真实合同和真实 Endpoint 证据，也不代表 Prepare DONE。
 
 ### Task 11: 覆盖审计、全量验证和权威文档同步
 
@@ -878,7 +894,7 @@ Expected: `git diff --check` 退出码 0；`config/config-dev.yaml` 仍只包含
 
 只有同时满足以下条件，才能把 `contract-review-prepare-api` 称为“实现完成”：
 
-1. OpenSpec 1—8 的适用任务都有对应 RED→GREEN 证据；
+1. OpenSpec 1—8 的适用任务都有符合执行指南的测试取证；
 2. 六域强类型上下文、证据切片、稳定键、引用完整性和摘要校验通过；
 3. 新旧三条 API 物理隔离且旧回归不变；
 4. 技术失败不返回残缺上下文，覆盖不足不伪装业务缺失；

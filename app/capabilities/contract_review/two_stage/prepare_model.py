@@ -45,6 +45,10 @@ class _StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
 
+class NeedsConfirmationError(Exception):
+    """权威未确认来源、范围或契约边界，需人工确认。"""
+
+
 class QuoteCandidate(_StrictModel):
     quote: NonBlankStr
 
@@ -79,6 +83,7 @@ class HeaderPartiesCandidate(QuoteCandidate):
     party_name: NonBlankStr | None = None
     party_aliases: list[NonBlankStr] = Field(default_factory=list)
     mention_text: NonBlankStr | None = None
+    mention_kind: Literal["PARTY_DEFINITION", "PARTY_APPELLATION", "ROLE_REFERENCE"] | None = None
 
 
 class SignatureCandidate(QuoteCandidate):
@@ -111,6 +116,10 @@ class SignatureCandidate(QuoteCandidate):
     fax: NonBlankStr | None = None
     website: NonBlankStr | None = None
     postal_code: NonBlankStr | None = None
+    block_ref: NonBlankStr | None = None
+    continues_ref: NonBlankStr | None = None
+    alternative_of_ref: NonBlankStr | None = None
+    purpose_text: NonBlankStr | None = None
 
 
 class AmountCopyCandidate(QuoteCandidate):
@@ -139,6 +148,14 @@ class AmountCopyCandidate(QuoteCandidate):
     copies_total: NonBlankStr | None = None
     copy_role: NonBlankStr | None = None
     copy_count: NonBlankStr | None = None
+    amount_role: NonBlankStr | None = None
+    tax_treatment: NonBlankStr | None = None
+    relation_kind: NonBlankStr | None = None
+    stage_order: NonBlankStr | None = None
+    stage_trigger_condition: NonBlankStr | None = None
+    stage_payment_term: NonBlankStr | None = None
+    stage_payment_method: NonBlankStr | None = None
+    copy_allocation_semantics: NonBlankStr | None = None
 
 
 class AttachmentCandidate(QuoteCandidate):
@@ -152,14 +169,18 @@ class AttachmentCandidate(QuoteCandidate):
     ]
     document_key: NonBlankStr
     mention_text: NonBlankStr | None = None
+    party_name: NonBlankStr | None = None
+    party_role: NonBlankStr | None = None
+    mention_kind: Literal["PARTY_DEFINITION", "PARTY_APPELLATION", "ROLE_REFERENCE"] | None = None
     declared_index: NonBlankStr | None = None
     declared_title: NonBlankStr | None = None
     declared_total: NonBlankStr | None = None
     content_embedded: bool | None = None
     section_heading_hint: NonBlankStr | None = None
     logical_title: NonBlankStr | None = None
-    relation_target_ref: NonBlankStr | None = None
-    relation_kind: NonBlankStr | None = None
+    relation_declaration_ref: NonBlankStr | None = None
+    relation_target_document_keys: list[NonBlankStr] = Field(default_factory=list)
+    relation_state: Literal["LINKED", "UNCERTAIN"] | None = None
 
 
 class PrepareModelEnvelope(_StrictModel, Generic[TEnvelope]):
@@ -237,16 +258,61 @@ def _parse_json_object_without_logging_content(content: str) -> dict[str, Any]:
     return parsed
 
 
-def _sanitize_validation_error(prompt_name: str, exc: PydanticValidationError) -> ModelFormatError:
-    fields: list[str] = []
+# M2-SANITIZED-VALIDATION-ATTRIBUTION-01：
+# 真实 ValidationError 只归并为下列稳定安全码，供 SITE 判断失败约束类别。
+# 原始 loc、模型自带键名、取值与异常 message 一律不进入异常消息、日志或 Trace。
+_VALIDATION_CONSTRAINT_PRIORITY = (
+    "DUPLICATE_CANDIDATE_REF",
+    "UNEXPECTED_FIELD",
+    "MISSING_REQUIRED_FIELD",
+    "INVALID_ENUM_VALUE",
+    "BLANK_OR_TOO_SHORT",
+    "OTHER_SCHEMA_REJECTION",
+)
+
+# 服务端白名单字段族：ValidationError 定位落在这里列出的字段上时才允许细分类别；
+# 其余定位（含模型自带的未知键名）统一折叠为安全占位符，不回显键名。
+_SERVER_KNOWN_FIELDS = frozenset(
+    set(PrepareModelEnvelope.model_fields)
+    | set(SourceGapCandidate.model_fields)
+    | set(HeaderPartiesCandidate.model_fields)
+    | set(SignatureCandidate.model_fields)
+    | set(AmountCopyCandidate.model_fields)
+    | set(AttachmentCandidate.model_fields)
+)
+
+
+def _loc_within_server_fields(loc: tuple[Any, ...]) -> bool:
+    return all(not isinstance(part, str) or part in _SERVER_KNOWN_FIELDS for part in loc)
+
+
+def _validation_constraint_code(exc: PydanticValidationError) -> str:
+    observed: set[str] = set()
     for error in exc.errors():
-        loc = error.get("loc", ())
-        field_path = ".".join(str(part) for part in loc)
-        if field_path:
-            fields.append(field_path)
-    unique_fields = sorted(set(fields))
-    joined = ", ".join(unique_fields) if unique_fields else "unknown"
-    return ModelFormatError(f"{prompt_name} 输出字段不符合预期: {joined}")
+        error_type = str(error.get("type", ""))
+        loc = tuple(error.get("loc", ()))
+        if error_type == "extra_forbidden":
+            observed.add("UNEXPECTED_FIELD")
+        elif not _loc_within_server_fields(loc):
+            observed.add("OTHER_SCHEMA_REJECTION")
+        elif error_type == "missing":
+            observed.add("MISSING_REQUIRED_FIELD")
+        elif error_type in {"string_too_short", "too_short"}:
+            observed.add("BLANK_OR_TOO_SHORT")
+        elif error_type in {"literal_error", "enum"}:
+            observed.add("INVALID_ENUM_VALUE")
+        elif error_type == "value_error":
+            observed.add("DUPLICATE_CANDIDATE_REF")
+        else:
+            observed.add("OTHER_SCHEMA_REJECTION")
+    for code in _VALIDATION_CONSTRAINT_PRIORITY:
+        if code in observed:
+            return code
+    return "OTHER_SCHEMA_REJECTION"
+
+
+def _sanitize_validation_error(prompt_name: str, constraint_code: str) -> ModelFormatError:
+    return ModelFormatError(f"{prompt_name} 输出不符合 Schema 约束: {constraint_code}")
 
 
 def _log_retry_event(
@@ -257,6 +323,7 @@ def _log_retry_event(
     duration_seconds: float,
     token_usage: dict[str, Any] | None,
     error_type: str | None,
+    validation_constraint: str | None = None,
 ) -> None:
     _logger.info(
         "prepare_model_attempt",
@@ -267,6 +334,7 @@ def _log_retry_event(
             "duration_seconds": round(duration_seconds, 6),
             "token_usage": token_usage,
             "error_type": error_type,
+            "validation_constraint": validation_constraint,
         },
     )
 
@@ -281,6 +349,8 @@ def invoke_typed_prepare_model(
     prompt_name: PreparePromptName,
     **prompt_values: str,
 ) -> PrepareModelEnvelope[list[PromptCandidate]]:
+    # 固定入口事件：只证明边界已进入，不携带 Prompt/正文/证据/异常 message。
+    _logger.info("prepare_model_call_enter", extra={"prompt_name": prompt_name})
     model = get_chat_model()
     messages = build_prepare_prompt(prompt_name, **prompt_values)
     response_format = get_prepare_response_format(prompt_name)
@@ -339,7 +409,8 @@ def invoke_typed_prepare_model(
                 continue
         except PydanticValidationError as exc:
             format_attempts += 1
-            format_error = _sanitize_validation_error(prompt_name, exc)
+            validation_constraint = _validation_constraint_code(exc)
+            format_error = _sanitize_validation_error(prompt_name, validation_constraint)
             _log_retry_event(
                 prompt_name=prompt_name,
                 attempt=total_attempt,
@@ -347,6 +418,7 @@ def invoke_typed_prepare_model(
                 duration_seconds=time.perf_counter() - start,
                 token_usage=token_usage,
                 error_type=exc.__class__.__name__,
+                validation_constraint=validation_constraint,
             )
             if format_attempts >= _MAX_FORMAT_ATTEMPTS:
                 error_to_raise = format_error

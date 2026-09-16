@@ -941,6 +941,69 @@ def test_alternative_signer_group_rejects_dangling_signer_slot_key():
     with pytest.raises(ValidationError, match="signer_slot_key"):
         ReviewContext.model_validate(payload)
 
+
+def test_alternative_signer_group_rejects_cross_block_slot_keys():
+    payload = valid_context_payload()
+    payload["shared_facts"]["signature"]["data"]["signature_blocks"] = [
+        {
+            "signature_block_key": "sig-block:1",
+            "document_key": "main",
+            "party_binding_state": "UNBOUND",
+            "candidate_party_keys": [],
+            "local_company_name": {
+                "presence": "ABSENT",
+                "normalization_state": "NOT_APPLICABLE",
+                "observations": [],
+            },
+            "evidence_ids": ["evidence:main:header-name"],
+        },
+        {
+            "signature_block_key": "sig-block:2",
+            "document_key": "main",
+            "party_binding_state": "UNBOUND",
+            "candidate_party_keys": [],
+            "local_company_name": {
+                "presence": "ABSENT",
+                "normalization_state": "NOT_APPLICABLE",
+                "observations": [],
+            },
+            "evidence_ids": ["evidence:main:header-name"],
+        },
+    ]
+    payload["shared_facts"]["signature"]["data"]["signer_slots"] = [
+        {
+            "signer_slot_key": "slot:1",
+            "signature_block_key": "sig-block:1",
+            "role_text": "法定代表人",
+            "role_state": "ELIGIBLE_SIGNER",
+            "presence": "PRESENT_EMPTY",
+            "signer_keys": [],
+            "identity_number_keys": [],
+            "evidence_ids": ["evidence:main:header-name"],
+        },
+        {
+            "signer_slot_key": "slot:2",
+            "signature_block_key": "sig-block:2",
+            "role_text": "授权代表",
+            "role_state": "ELIGIBLE_SIGNER",
+            "presence": "PRESENT_EMPTY",
+            "signer_keys": [],
+            "identity_number_keys": [],
+            "evidence_ids": ["evidence:main:header-name"],
+        },
+    ]
+    payload["shared_facts"]["signature"]["data"]["alternative_signer_groups"] = [
+        {
+            "signer_group_key": "grp:1",
+            "signer_slot_keys": ["slot:1", "slot:2"],
+            "relation_state": "CONFIRMED",
+            "evidence_ids": ["evidence:main:header-name"],
+        }
+    ]
+
+    with pytest.raises(ValidationError, match="signature_block_key"):
+        ReviewContext.model_validate(payload)
+
 def test_signing_date_observation_rejects_dangling_signature_block_key():
     payload = valid_context_payload()
     payload["shared_facts"]["signature"]["data"]["signing_date_observations"] = [

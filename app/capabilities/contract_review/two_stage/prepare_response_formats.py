@@ -11,9 +11,15 @@ PreparePromptName = Literal[
     "prepare_attachment_document",
 ]
 
+_MENTION_KIND_VALUES = ["PARTY_DEFINITION", "PARTY_APPELLATION", "ROLE_REFERENCE"]
+
 
 def _nullable_string() -> dict[str, Any]:
     return {"type": ["string", "null"]}
+
+
+def _nullable_enum(values: list[str]) -> dict[str, Any]:
+    return {"enum": [*values, None]}
 
 
 def _nullable_bool() -> dict[str, Any]:
@@ -79,6 +85,7 @@ HEADER_PARTIES_CANDIDATE_SCHEMA = _object({
     "party_name": _nullable_string(),
     "party_aliases": _array({"type": "string"}),
     "mention_text": _nullable_string(),
+    "mention_kind": _nullable_enum(_MENTION_KIND_VALUES),
 })
 
 
@@ -116,6 +123,10 @@ SIGNATURE_CANDIDATE_SCHEMA = _object({
     "fax": _nullable_string(),
     "website": _nullable_string(),
     "postal_code": _nullable_string(),
+    "block_ref": _nullable_string(),
+    "continues_ref": _nullable_string(),
+    "alternative_of_ref": _nullable_string(),
+    "purpose_text": _nullable_string(),
 })
 
 
@@ -149,6 +160,14 @@ AMOUNT_COPY_CANDIDATE_SCHEMA = _object({
     "copies_total": _nullable_string(),
     "copy_role": _nullable_string(),
     "copy_count": _nullable_string(),
+    "amount_role": _nullable_string(),
+    "tax_treatment": _nullable_string(),
+    "relation_kind": _nullable_string(),
+    "stage_order": _nullable_string(),
+    "stage_trigger_condition": _nullable_string(),
+    "stage_payment_term": _nullable_string(),
+    "stage_payment_method": _nullable_string(),
+    "copy_allocation_semantics": _nullable_string(),
 })
 
 
@@ -167,14 +186,18 @@ ATTACHMENT_CANDIDATE_SCHEMA = _object({
     "document_key": {"type": "string", "minLength": 1},
     "quote": {"type": "string", "minLength": 1},
     "mention_text": _nullable_string(),
+    "party_name": _nullable_string(),
+    "party_role": _nullable_string(),
+    "mention_kind": _nullable_enum(_MENTION_KIND_VALUES),
     "declared_index": _nullable_string(),
     "declared_title": _nullable_string(),
     "declared_total": _nullable_string(),
     "content_embedded": _nullable_bool(),
     "section_heading_hint": _nullable_string(),
     "logical_title": _nullable_string(),
-    "relation_target_ref": _nullable_string(),
-    "relation_kind": _nullable_string(),
+    "relation_declaration_ref": _nullable_string(),
+    "relation_target_document_keys": _array({"type": "string"}),
+    "relation_state": _nullable_enum(["LINKED", "UNCERTAIN"]),
 })
 
 

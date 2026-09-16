@@ -10,6 +10,15 @@ prepare_header_parties_main:
     2) 每条候选都附带可核验的原文短引文；
     3) 无法可靠提取时，写入 source_gaps，注明受影响事实类别与原因；
     4) 仅依据当前输入内容，不引入外部信息。
+    5) PARTY_MENTION 候选必须显式输出 mention_kind：
+       PARTY_DEFINITION 仅用于给出主体定义或名称与角色对应关系的表述；
+       PARTY_APPELLATION 用于对已命名主体的称谓引用；
+       ROLE_REFERENCE 用于仅以角色称谓（如甲方/买方）指代主体的表述；
+       无法可靠区分时也必须输出 mention_kind 字段并显式置为 null，不得猜测为 PARTY_DEFINITION。
+
+    6) 每条候选必须输出非空且在同一次输出内彼此唯一的 candidate_ref：该字段只是本次输出内的
+       临时内部引用，用于在同一输出内指向具体候选；不得重复，也不得留空；它不是公开标识、
+       文档键或稳定键，最终装配后消失。
 
     scope_label: {scope_label}
     extraction_input: {extraction_input}
@@ -29,6 +38,16 @@ prepare_signature_document:
     2) 每条候选都附带可核验的原文短引文；
     3) 无法可靠提取时，写入 source_gaps，注明受影响事实类别与原因；
     4) 仅依据当前输入内容，不引入外部信息。
+    5) SIGNATURE_BLOCK 候选各自独立成块；同一签章块跨页续写的引文输出为独立 SIGNATURE_BLOCK 候选，
+       并用 continues_ref 引用该块主候选的 candidate_ref；无法确定归属时该字段显式输出 null。
+    6) SIGNER_NAME、IDENTITY_NUMBER、SIGNING_DATE、账户与联系候选若能确定所属签章块，
+       用 block_ref 引用该块主候选的 candidate_ref；无法可靠确定时显式输出 null，不得猜测。
+    7) 同一签章块内以"或"等表述互为替代的签署人栏位，替代栏候选用 alternative_of_ref
+       引用被替代栏 SIGNER_NAME 候选的 candidate_ref；无替代关系时显式输出 null。
+    8) 账户或联系观察在原文明确用途（如本合同收款、结算）时输出 purpose_text 保留用途原文表述；
+       用途不明确时 purpose_text 显式输出 null，不得臆测。
+    9) extraction_input 若提供 extraction_ranges，只允许提取并引用该范围内出现的原文，
+       范围外内容一律不得提取或引用。
 
     scope_label: {scope_label}
     extraction_input: {extraction_input}
@@ -48,6 +67,19 @@ prepare_amount_copy_main:
     2) 每条候选都附带可核验的原文短引文；
     3) 无法可靠提取时，写入 source_gaps，注明受影响事实类别与原因；
     4) 仅依据当前输入内容，不引入外部信息。
+    5) 金额候选输出 amount_role，保留原文对金额语义角色的表述；原文未明示时显式输出 null。
+    6) tax_treatment 只在原文明确出现含税或不含税口径时输出该表述，
+       无法从原文确认时显式输出 null，不得推断税务口径。
+    7) relation_kind 只在原文以合同总价一类表述明示整体关系时输出 CONTRACT_OVERALL，
+       否则显式输出 null，不得由数值大小或出现位置推断。
+    8) 付款阶段候选分别输出 stage_order 保留原文明示顺序、stage_trigger_condition 保留触发条件、
+       stage_payment_term 保留期限、stage_payment_method 保留方式、stage_amount_numeric 保留原文
+       数字金额、stage_amount_uppercase 保留原文大写金额；仅在原文对应该阶段明示时填写，原文未
+       明示的字段显式输出 null。不得计算阶段金额、比例合计、差额、舍入或尾差，不得由比例、总额
+       或其他字段推导金额，也不得自动补写大写金额。
+    9) 份数分配候选输出 copy_allocation_semantics：原文明示各方各执为 EACH，
+       明示共同持有为 COLLECTIVE，无法确定时为 UNCERTAIN；
+       不得由各方份数或附件数量推算整体总份数。
 
     scope_label: {scope_label}
     extraction_input: {extraction_input}
@@ -67,6 +99,15 @@ prepare_attachment_document:
     2) 每条候选都附带可核验的原文短引文；
     3) 无法可靠提取时，写入 source_gaps，注明受影响事实类别与原因；
     4) 仅依据当前输入内容，不引入外部信息。
+    5) PARTY_MENTION 候选必须显式输出 mention_kind，口径与定义、称谓、角色引用三态一致；
+       裸名称或称谓不得判定为 PARTY_DEFINITION，无法可靠区分时也必须输出该字段并显式置为 null。
+    6) extraction_input 若提供 extraction_ranges，只允许提取并引用该范围内出现的原文。
+    7) 附件清单关系候选输出 relation_declaration_ref，引用本次输出内 DECLARED_ATTACHMENT
+       候选的 candidate_ref；relation_target_document_keys 只填写实际 document_key，
+       不得把候选引用当作文档键；relation_state 为 LINKED 时只关联恰好一个实际文档，
+       为 UNCERTAIN 时可保留一个或多个候选；无法建立关系时不输出关系候选。
+    8) 一个物理文件内可识别 0..N 个顶层逻辑附件候选，各自输出其局部引文，
+       逻辑候选的 source_locator 由已定位引文生成；这些候选不得增加实际附件数量。
 
     scope_label: {scope_label}
     extraction_input: {extraction_input}

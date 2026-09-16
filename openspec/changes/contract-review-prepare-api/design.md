@@ -287,6 +287,8 @@ SignatureFieldObservation
 
 签署人栏位和签署日期必须引用真实签章块；账户/联系观察可以来自块外合格来源，此时不伪造 `signature_block_key`。只有当前文档证据可靠确定主体时才设置 `party_key`。身份证号只是合同来源事实；Prepare 不用预设值反向关联人员或选择候选。
 
+签章装配遵循保守关系规则：证据可定位且关系唯一时才创建自动关系；事实值存在但主体、用途或归属证据不足时保留事实并使用 `UNBOUND` 或 `UNCERTAIN`。若同一可靠证据集合存在多个合理的栏位、人员归属、替代或主体/用途关系解释，抛出 `NeedsConfirmationError`，停止整个 Prepare，等待人工判断；不得添加模型内部标签、数组顺序或邻近距离来继续推断。候选无效、跨文档/跨块或其他引用不闭合属于模型格式/技术失败。覆盖只描述可定位来源缺口：可靠空扫描为 `COMPLETE`，仅部分签章事实类别受影响为 `PARTIAL`，全部适用类别明确受影响才为 `UNAVAILABLE`。
+
 ### 7. `amount_payment` 保留所有显式金额和付款关系，不计算裁决值
 
 金额和比例的规范化值使用十进制字符串，不使用二进制浮点数：
@@ -394,15 +396,41 @@ AttachmentRelation
 
 实际物理附件集合以 `source_snapshot.attachments` 为唯一事实来源，manifest 不复制身份、内容或哈希。`LINKED` 必须且只能指向一个实际来源；`UNCERTAIN` 可指向一个或多个候选。没有关系时不生成记录；Prepare 不生成 `MISSING`、`EXTRA`、`NO_LINK_ESTABLISHED` 或标题一致性结论。逻辑候选不自动计入实际附件数量。
 
+#### Task 7 内部候选与装配接口
+
+商业域唯一内部入口为：
+
+```python
+def extract_amount_copy_manifest(
+    documents: PreparedDocuments,
+    canonical_parties: Sequence[CanonicalParty],
+    evidence: EvidenceRegistry,
+    extraction_ranges: Mapping[str, Sequence[MarkdownRange]] | None = None,
+) -> CommercialFactDomains:
+    ...
+```
+
+`CommercialFactDomains` 只承载 `amount_payment`、`copy_terms` 和 `attachment_manifest` 三个 `FactDomain`，不构造公开 API 包装。`prepare_amount_copy_main` 只调用主合同；附件清单候选逐文档调用 `prepare_attachment_document`，并将可选 `extraction_ranges` 透传。每次附件调用的 `extraction_input` 必须是确定性 JSON 对象，始终携带 `extraction_ranges`（无范围为 `[]`）、当前 `document_key` 和排序后的 `available_attachment_document_keys`；可选目标只来自 `source_snapshot.attachments`。该 JSON 是模型内部上下文，不改变调用器或公开 Prepare 接口。`AmountCopyCandidate` 必须能表达金额角色、税务口径、关系种类、阶段顺序/触发条件/期限/方式和份数分配语义；`AttachmentCandidate` 必须能表达声明候选引用、实际目标 `document_key` 集合和 `LINKED|UNCERTAIN` 关系状态。候选 `candidate_ref` 仅在单次模型调用内引用候选；关系目标不得把候选 ref 当作公开文档键，后端也必须拒绝任何快照外目标。逻辑附件的 `source_locator` 由其已定位 `quote` 生成。所有新增字段只为承载本节既有公开事实，不能引入计算、缺失/多余裁决或标题一致性判断。
+
+商业域 source gap 没有可信可定位引文时，公开 `FactIssue` 不得把模型 `quote`、`message`、候选数组位置或候选引用纳入稳定键。该类问题以既有固定错误码、`document_key` 和排序后的 `affected_fact_kinds` 形成稳定坐标；相同坐标的重复问题合并，使用确定性系统消息且不伪造 `evidence_ids`。有可信可定位引文时，仍以真实 Markdown 坐标作为键坐标。
+
 ### 10. Prepare 流水线按失败边界分段，四类标准附件使用安全扫描
 
 固定编排顺序为：请求校验与规范化 → 摘要及输入文档模型 → 内嵌附件边界识别 → 明确重复门禁 → 逐域候选召回/语义提取 → 确定性规范化与关系装配 → 证据唯一定位和切片验证 → 覆盖/问题聚合 → 引用完整性与稳定排序 → `document_set_hash`/`context_digest` 生成。
+
+该顺序规定逻辑依赖而非运行时必须逐一暴露的十二个独立阶段。`prepare_contract` 是唯一公开服务入口；内部组件可以封装多个相邻逻辑阶段，但不得改变输入门禁、标准附件扫描、领域提取、证据/覆盖、引用验证、排序和摘要的依赖顺序。服务测试以可观察依赖与最终行为验证该规则，不新增调用方可见的阶段追踪接口。详见 `DEC-LTC-20260911-005`。
 
 任一模型超时、调用失败、输出截断、Schema/格式重试耗尽、证据装配失败或内部引用无法闭合时，请求整体失败且不返回 `ReviewContext`。`PARTIAL/UNAVAILABLE` 只用于 Markdown 已存在但某一可定位来源范围确实未被可靠看清的情况。
 
 首期标准附件目录只包含需求说明书、技术规范书、工作说明书和质量标准四类，以及未来逐项经过业务审核并进入版本化目录的同义名称；当前没有明确列入目录的同义名称不得自行启用。标准附件资格至少要求附件边界可靠、文档内部身份有证据、正文结构可交叉印证且没有身份冲突；文件名、篇幅或宽泛关键词不能单独触发该路径。目录外类型、补充协议、商务协议以及类型或边界不可靠的附件继续执行普通完整提取。
 
+首期“正文结构可交叉印证”采用保守 Markdown 判据：规范化 Markdown 必须至少存在一个非身份元数据的 `##` 至 `######` 正文标题，且该标题后存在非空、非身份元数据正文。任何 `#`/H1 标题均不构成正文分节，不因其文字是否等于文档名称而改变；首期不兼容中文编号段落标题。不满足该判据时不得建立标准附件扫描计划，继续普通完整提取。详见 `DEC-LTC-20260911-003`。
+
+标准附件扫描的边界可靠性由后端从 `PreparedDocuments` 和待处理 `document_key` 确定，不接受旧提取器的仅 Markdown `PreparedDocument`，也不接受调用方或模型声明的布尔标记。上传附件必须同时存在于 `source_snapshot.attachments` 和 `markdown_by_document`；内嵌附件还必须验证其 `source_locator` 对应主 Markdown 切片与附件 Markdown 一致。无法证明边界可靠时不建立扫描计划，继续普通完整提取。`SafetyScanPlan.scanned_range` 与 `candidate_ranges` 均为 `MarkdownCharLocator`，不得兼容 tuple、list 或任意对象形式的替代坐标。
+
 可靠识别的四类标准附件仍完整进入 `attachment_manifest`，保存标题、编号、边界、来源、内容摘要、声明关联和覆盖。随后对其规范化 Markdown 全文执行低成本确定性安全扫描，扫描范围必须覆盖主体定义/称谓（包括“甲方/乙方应……”类用法）、签署区、法人或授权人、人员与身份证号关联、签署日期、账户及公司级联系方式。扫描无候选且完整执行时，相关事实域可按“已完整检查但没有事实”结束内容处理；扫描命中时，只把带绝对坐标的章节、表格、签章区或相邻窗口交给对应事实域做局部语义提取，不展开整份标准附件。
+
+`long_document.py` 只产生可靠识别结果和安全扫描范围计划，不调用领域提取器、不聚合域覆盖、也不决定请求失败。`prepare_service.py` 是标准附件无候选结束、命中局部 party/signature 提取、最终证据坐标去重以及扫描至结果合并全链技术失败闭合的唯一编排者；该责任在 Task 9 的服务测试与实现中完成。详见 `DEC-LTC-20260911-004`。
 
 扫描、候选定位、局部提取、证据装配或结果合并任一步未完整执行时，请求整体失败，不返回残缺上下文。扫描器和目录不得运行时自学习或由模型自动扩充；未来新增类型或同义名称须经过业务确认并升级目录版本及 `pipeline_version`。
 

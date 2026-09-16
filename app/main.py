@@ -5,6 +5,9 @@ from app.core.config import get_settings
 from app.core.logging import get_logger, setup_logging
 from app.core.middleware import AuthMiddleware, TraceIdMiddleware, register_exception_handlers
 from app.capabilities.contract_review.router import router as contract_review_router
+from app.capabilities.contract_review.two_stage.prepare_router import (
+    router as contract_review_prepare_router,
+)
 from app.capabilities.translate.router import router as translate_router
 
 
@@ -31,6 +34,7 @@ def create_app(register_middleware: bool = True) -> FastAPI:
 
     register_exception_handlers(app)
     app.include_router(contract_review_router)
+    app.include_router(contract_review_prepare_router)
     app.include_router(translate_router)
 
     @app.get("/health")

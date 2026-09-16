@@ -157,6 +157,8 @@
 ### Requirement: signature 保留真实签章块、人员和字段关系
 `SignatureFacts` SHALL 包含 `signature_blocks[]`、`signer_slots[]`、`alternative_signer_groups[]`、`signer_candidates[]`、`identity_number_candidates[]`、`person_id_relations[]`、`signing_date_observations[]`、`account_observations[]` 和 `contact_observations[]`。签章块、栏位、人员、号码、日期和字段观察 SHALL 使用版本内稳定键显式引用，不得依赖数组位置。签署人栏位和签署日期 SHALL 引用真实 `signature_block_key`；块外账户或联系观察 SHALL 省略该键而保留真实文档、主体绑定/候选、用途状态和证据。
 
+签章装配 SHALL 只在所有关系有可定位证据且唯一可确定时自动完成。事实值可定位但主体、用途或归属没有充分证据时，系统 SHALL 保留该值，并使用 `UNBOUND` 或 `UNCERTAIN`，不得把模型推测升级为 `BOUND` 或 `CONFIRMED`。当同一证据集合支持多个合理的栏位、人员归属、替代关系或主体/用途关系解释时，系统 SHALL 抛出 `NeedsConfirmationError` 并停止本次 Prepare，不得依赖数组位置、距离、预设或模型内部标签强行选择。候选的无效、跨文档或跨块引用仍 SHALL 视为引用不闭合并使请求失败，而非降级为人工确认。
+
 #### Scenario: 一个栏位填写多名人员
 - **WHEN** 同一签署人栏位可靠填写多名人员
 - **THEN** `signer_keys` SHALL 引用全部人员候选
@@ -167,10 +169,23 @@
 - **THEN** Prepare SHALL 保留全部人员、号码和 `association_state=UNCERTAIN` 的候选关系
 - **AND** 系统 SHALL NOT 按顺序、距离或实时预设进行配对
 
+#### Scenario: 同角色签署结构无法唯一解释
+- **WHEN** 同一签章块中存在多个同角色人员或栏位，现有可靠证据无法唯一证明其是一个栏位多人还是多个独立栏位
+- **THEN** 系统 SHALL 抛出 `NeedsConfirmationError`
+- **AND** 系统 SHALL NOT 合并、拆分或选择任一栏位作为自动装配结果
+
 #### Scenario: 账户来自块外收款条款
 - **WHEN** 主合同块外条款以可靠证据明确账户属于某主体且用于本合同收款或结算
 - **THEN** Prepare SHALL 保留账户字段、主体、用途和证据
 - **AND** 该观察 SHALL NOT 虚构 `signature_block_key`
+
+#### Scenario: 签章来源缺口与可靠空结果
+- **WHEN** 已可靠完成某文档的签章范围扫描且没有发现签章事实
+- **THEN** 该文档 `signature` coverage SHALL 为 `COMPLETE`
+- **WHEN** 可定位来源缺口只影响签章域的部分事实类别
+- **THEN** 该文档 coverage SHALL 为 `PARTIAL`
+- **WHEN** 可定位来源缺口明确影响签章块、签署栏位/人员、人员证件关联、签署日期以及账户/联系观察的全部适用类别
+- **THEN** 该文档 coverage SHALL 为 `UNAVAILABLE`
 
 ### Requirement: amount_payment 保留所有显式金额与付款事实
 `AmountPaymentFacts` SHALL 包含 `amounts[]`、`amount_relations[]`、`payment_methods[]` 和 `payment_stages[]`。每个金额 SHALL 使用唯一 `amount_key`，分别以带状态的观察保存数字金额、大写金额原文、币种、税务口径、语义角色和证据；十进制金额与比例规范化值 SHALL 使用十进制字符串而非浮点数。付款阶段 SHALL 使用 `payment_stage_key`，保存名称、明示顺序、比例、金额引用、触发条件、期限、方式和证据。只有原文明示时 SHALL 建立 `CONTRACT_OVERALL` 关系。

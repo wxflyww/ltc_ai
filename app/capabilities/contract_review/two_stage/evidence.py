@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from collections.abc import Sequence
 
 from app.capabilities.contract_review.two_stage.keys import stable_key
 from app.capabilities.contract_review.two_stage.schemas import EvidenceItem
@@ -64,18 +65,23 @@ class EvidenceRegistry:
     def __init__(self, markdown_by_document: Mapping[str, str]):
         self._markdown_by_document = dict(markdown_by_document)
         self._items_by_coordinate: dict[tuple[str, int, int], EvidenceItem] = {}
+        self._unlocatable_ids: set[str] = set()
 
     def register(
         self,
         document_key: str,
         quote: str,
         allowed_range: tuple[int, int] | None = None,
+        allowed_ranges: Sequence[tuple[int, int]] | None = None,
     ) -> EvidenceItem:
         markdown = self._markdown_by_document.get(document_key)
         if markdown is None:
             raise EvidenceLocationError(f"未知 document_key: {document_key}")
 
-        start, end = locate_unique_quote(markdown, quote, allowed_range=allowed_range)
+        if allowed_ranges is not None:
+            start, end = locate_unique_quote_in_ranges(markdown, quote, allowed_ranges=allowed_ranges)
+        else:
+            start, end = locate_unique_quote(markdown, quote, allowed_range=allowed_range)
         coordinate = (document_key, start, end)
         existing = self._items_by_coordinate.get(coordinate)
         if existing is not None:
@@ -100,6 +106,31 @@ class EvidenceRegistry:
         self._items_by_coordinate[coordinate] = item
         return item
 
+    def register_unlocatable(
+        self,
+        document_key: str,
+        quote: str,
+    ) -> str:
+        """登记无法定位的 quote，返回确定性内部 evidence_id。
+
+        不可定位引用只保留在并行内部结构中：不构造公开 EvidenceItem、
+        不进入 items()，避免伪造或扩展 source_locator 契约。
+        """
+        if not quote:
+            raise EvidenceLocationError("quote 不能为空")
+        if document_key not in self._markdown_by_document:
+            raise EvidenceLocationError(f"未知 document_key: {document_key}")
+        evidence_id = stable_key(
+            "evidence_unlocatable",
+            {"document_key": document_key, "quote": quote},
+        )
+        self._unlocatable_ids.add(evidence_id)
+        return evidence_id
+
+    def is_unlocatable(self, evidence_id: str) -> bool:
+        return evidence_id in self._unlocatable_ids
+
+
     def items(self) -> list[EvidenceItem]:
         return [
             item
@@ -108,3 +139,33 @@ class EvidenceRegistry:
                 key=lambda kv: (kv[0][0], kv[0][1], kv[0][2], kv[1].evidence_id),
             )
         ]
+def locate_unique_quote_in_ranges(
+    markdown: str,
+    quote: str,
+    *,
+    allowed_ranges: Sequence[tuple[int, int]] | None = None,
+) -> tuple[int, int]:
+    """在多个不连续范围内定位 quote，保持各范围独立。"""
+    if not quote:
+        raise EvidenceLocationError("quote 不能为空")
+    ranges = allowed_ranges or [(0, len(markdown))]
+    all_matches: list[tuple[int, int]] = []
+    for range_start, range_end in ranges:
+        if range_start < 0 or range_end < range_start or range_end > len(markdown):
+            raise EvidenceLocationError("allowed_range 超出文档边界")
+        probe = range_start
+        while True:
+            index = markdown.find(quote, probe, range_end)
+            if index == -1:
+                break
+            end = index + len(quote)
+            if end > range_end:
+                probe = index + 1
+                continue
+            all_matches.append((index, end))
+            probe = index + 1
+    if not all_matches:
+        raise EvidenceLocationError("quote 在限定范围内未命中")
+    if len(all_matches) > 1:
+        raise EvidenceLocationError("quote 在限定范围内定位不唯一")
+    return all_matches[0]
