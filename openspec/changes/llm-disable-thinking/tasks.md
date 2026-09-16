@@ -1,50 +1,64 @@
 > **实施计划**：`docs/superpowers/plans/2026-09-16-llm-disable-thinking.md`（Task 1–5，TDD 先红后绿）。  
 > **次序**：本 change **先做**，`contract-review-mvp-prefill` 依赖它。
 
+## 0. 收口说明（2026-09-16 实施完成后回填）
+
+- **实施结论**：已落地，提交 `a031153`。生产改动仅 2 处 —— `app/core/config.py` 加 `disable_thinking: bool = True`；`service.py` 新增 `_model_for_json_prompt()` 并替换 `_invoke_json_prompt` 里的 `get_chat_model()`。
+- **验证基线**：全量 `pytest tests/ -q` → **801 passed / 0 failed**（本 change 前 753）；`tests/two_stage/` → **469 passed**（前置实测为 467，用户并行新增 2 个测试后为 469）。
+- **红线核验**：`two_stage/`（仅用户自有的 3 个在途条目，本 change 零新增）、`app/models/llm.py`、`translate/`、`response_formats.py` → `git status` 均无本 change 产生的条目。
+- **本文件勾选标准**：只勾**已实际执行并留有证据**的项；未做或部分做的就地标注，不抹平。
+
 ## 1. 契约基线与回归保护
 
-- [ ] 1.1 为评审链路写失败测试：一次模型调用中传入的模型对象 `extra_body` 含 `{"chat_template_kwargs": {"enable_thinking": False}}`，确认测试先失败
-- [ ] 1.2 为开关写失败测试：`llm.disable_thinking=false` 时，模型调用**不携带** `extra_body`，确认测试先失败
-- [ ] 1.3 记录 `mode=review` 的响应基线：顶层键集合、`checks` / `metrics` 条目数与字段，作为改后对照
-- [ ] 1.4 核实既有 `tests/test_llm_factory.py` 与本变更无交集（本变更不改 `ChatOpenAI` 构造参数），确认全量测试基线仍为全绿
+- [x] 1.1 为评审链路写失败测试：一次模型调用中传入的模型对象 `extra_body` 含 `{"chat_template_kwargs": {"enable_thinking": False}}`，确认测试先失败 → `tests/test_contract_review_thinking.py::test_invoke_json_prompt_actually_sends_thinking_off`（先红后绿）
+- [x] 1.2 为开关写失败测试：`llm.disable_thinking=false` 时，模型调用**不携带** `extra_body`，确认测试先失败 → `test_model_for_json_prompt_returns_plain_model_when_switch_off`
+- [x] 1.3 记录 `mode=review` 的响应基线：顶层键集合、`checks` / `metrics` 条目数与字段，作为改后对照 → **执行方式与计划不同**：未落独立基线文件，改为真实端点抽验记录（`tmp/_probe_change1_live.py`）：顶层键 `header` / `sections` / `signature_parties`、16 段；结构层面见 4.2
+- [x] 1.4 核实既有 `tests/test_llm_factory.py` 与本变更无交集（本变更不改 `ChatOpenAI` 构造参数），确认全量测试基线仍为全绿 → 全量 801 passed；本变更只调 `bind()`，不碰构造参数
 
 ## 2. 实现：评审链路调用层关思考（仅改 contract_review 自身）
 
-- [ ] 2.1 在 `app/capabilities/contract_review/service.py` 的 `_invoke_json_prompt` 中，`model = get_chat_model()` 之后按开关追加一次绑定：开关为真时 `model = model.bind(extra_body={"chat_template_kwargs": {"enable_thinking": False}})`
-- [ ] 2.2 确认该绑定同时覆盖 `service.py:316`（首次调用）与 `service.py:357`（格式错重试）两处 —— 两处共用同一个 `model` 变量，不得只改一处
-- [ ] 2.3 确认 `response_format` 与关思考**可同时生效**（实测共存无冲突）：绑定后的对象仍能正常接收 `invoke_model(..., response_format=...)`
-- [ ] 2.4 确认 `invoke_model` 的指标标签未受影响：绑定后 `getattr(model, "model_name", "")` 仍返回真实模型名（实测 `Qwen3.6-35B`），`llm_calls_total` / `llm_tokens_total` 标签不退化
-- [ ] 2.5 在 `app/core/config.py` 的 `LlmSettings` 新增 `disable_thinking: bool = True`（环境变量 `LTC__LLM__DISABLE_THINKING` 可覆盖）
-- [ ] 2.6 在 `config/config.yaml` 与 `config-dev.yaml` / `config-test.yaml` / `config-prod.yaml` 补 `disable_thinking: true`，保持四处一致
+- [x] 2.1 在 `app/capabilities/contract_review/service.py` 的 `_invoke_json_prompt` 中，`model = get_chat_model()` 之后按开关追加一次绑定：开关为真时 `model = model.bind(extra_body={"chat_template_kwargs": {"enable_thinking": False}})` → 抽成独立函数 `_model_for_json_prompt()`（`service.py:287`），开关关闭时直接返回原对象
+- [x] 2.2 确认该绑定同时覆盖 `service.py:316`（首次调用）与 `service.py:357`（格式错重试）两处 —— 两处共用同一个 `model` 变量，不得只改一处 → 已确认共用同一变量
+- [x] 2.3 确认 `response_format` 与关思考**可同时生效**（实测共存无冲突）：绑定后的对象仍能正常接收 `invoke_model(..., response_format=...)` → `tests/test_contract_review_prefill.py::test_prefill_call_carries_strict_schema_and_thinking_off` 同时断言两者
+- [x] 2.4 确认 `invoke_model` 的指标标签未受影响：绑定后 `getattr(model, "model_name", "")` 仍返回真实模型名（实测 `Qwen3.6-35B`），`llm_calls_total` / `llm_tokens_total` 标签不退化 → `test_bound_model_keeps_model_name_for_metrics`
+- [x] 2.5 在 `app/core/config.py` 的 `LlmSettings` 新增 `disable_thinking: bool = True`（环境变量 `LTC__LLM__DISABLE_THINKING` 可覆盖）
+- [x] 2.6 在 `config/config.yaml` 与 `config-dev.yaml` / `config-test.yaml` / `config-prod.yaml` 补 `disable_thinking: true`，保持四处一致 → **改按默认值生效，四个 yaml 均不写入**：`LlmSettings.disable_thinking` 默认 `True`，不写即生效；刻意不动 `config-dev.yaml`（端点曾被手工反复切换）与 `config-test.yaml`（有在途改动）。环境变量覆盖路径仍然可用（**措辞经收口时修订**）
 
 ## 3. 边界守护（两条红线 + 一条排除）
 
-- [ ] 3.1 **验证 `two_stage/**` 零改动**：本变更不得**新增**任何 `two_stage/**` 条目（对比本变更开始前的 `git status --short app/capabilities/contract_review/two_stage/`；用户自己已存在的未提交改动不属于本变更，须原样保留、不得顺手提交）；`prepare_model.py:369` 的调用形态与本变更前逐字节一致
-- [ ] 3.5 **共享单例非污染前置实测（2026-09-16 已完成，实施后须复核）**：`get_chat_model()` 是进程级单例（`llm.py:18,21-25`），本变更在 `service.py:294` 处 `model.bind(...)`。实测证明 `bind()` 返回新对象且**不污染原单例**：
+- [x] 3.1 **验证 `two_stage/**` 零改动**：本变更不得**新增**任何 `two_stage/**` 条目（对比本变更开始前的 `git status --short app/capabilities/contract_review/two_stage/`；用户自己已存在的未提交改动不属于本变更，须原样保留、不得顺手提交）；`prepare_model.py:369` 的调用形态与本变更前逐字节一致 → 提交时精确白名单，`two_stage/**` 零新增条目
+- [x] 3.5 **共享单例非污染前置实测（2026-09-16 已完成，实施后须复核）**：`get_chat_model()` 是进程级单例（`llm.py:18,21-25`），本变更在 `service.py:294` 处 `model.bind(...)`。实测证明 `bind()` 返回新对象且**不污染原单例**：
   - `m1 is get_chat_model()` 为 true（单例）；`bound is not m1` 为 true（新对象）
   - bind 前后原单例 `model_kwargs["extra_body"]` **均为 `None`**；连做 3 次 bind 后仍为 `None`
   - 生产时序实测（同进程、不 reset 单例）：two_stage 真实调用路径（`build_prepare_prompt` + `get_prepare_response_format` + `invoke_model`）在 bind 前后两次调用中，**对象 id 相同**、类仍为 `ChatOpenAI`、`extra_body` 仍为 `None`、解析顶层键一致、无 thinking 污染 → 6/6 全通过
   - 证据：`tmp/_probe_ts_isolation.json`、`tmp/_probe_ts_timeline.json`
-- [ ] 3.6 **`tests/two_stage/` 回归基线**：本变更前实测 **467 passed / 0 failed**（5.34s）；实施后必须仍为该结果，不得修改 two_stage 测试期望来凑绿
-- [ ] 3.7 **不新增跨流程共享开关**：`disable_thinking` 只被 `contract_review` 自身读取，**two_stage 不读该配置**；配置项仅为后端兼容逃生门，不构成"新旧流程隐式开关互相切换"（`two_stage/AGENTS.md:29` 的硬约束）
-- [ ] 3.2 **验证 `app/models/llm.py` 零改动**：`git status --short app/models/llm.py` 无输出；`invoke_model` 签名与函数体不变
-- [ ] 3.3 加一条守护断言测试：`translate` 的模型调用（`app/capabilities/translate/service.py:53`）**不含**该参数，防止将来被顺手"统一"而改变其行为
-- [ ] 3.4 确认 `mode=review` 除"关思考"外**无任何其他改动**：prompt 文件、`response_formats.py`、`schemas.py`、`checks.py`、`amounts.py`、错误码体系在本变更内 `git status` 均无输出
+  - **实施后复核已完成**：新增 `tests/test_thinking_scope_guard.py` 三条用例把结论固化为常驻断言（绑定返回新对象 / 单例不被写脏 / 连做 3 次仍干净）
+- [x] 3.6 **`tests/two_stage/` 回归基线**：本变更前实测 **467 passed / 0 failed**（5.34s）；实施后必须仍为该结果，不得修改 two_stage 测试期望来凑绿 → **实施后实测 469 passed / 0 failed**（用户在并行工作中新增 2 个用例，非本变更引起的差异；未修改任何 two_stage 测试期望）
+- [x] 3.7 **不新增跨流程共享开关**：`disable_thinking` 只被 `contract_review` 自身读取，**two_stage 不读该配置**；配置项仅为后端兼容逃生门，不构成"新旧流程隐式开关互相切换"（`two_stage/AGENTS.md:29` 的硬约束）→ 已核：`two_stage/` 内零引用
+- [x] 3.2 **验证 `app/models/llm.py` 零改动**：`git status --short app/models/llm.py` 无输出；`invoke_model` 签名与函数体不变 → 无输出
+- [x] 3.3 加一条守护断言测试：`translate` 的模型调用（`app/capabilities/translate/service.py:53`）**不含**该参数，防止将来被顺手"统一"而改变其行为 → **本次收口时补齐**：`tests/test_thinking_scope_guard.py::test_translate_call_stays_bare`（同时断言无 `extra_body` 与无 `response_format`）
+- [x] 3.4 确认 `mode=review` 除"关思考"外**无任何其他改动**：prompt 文件、`response_formats.py`、`schemas.py`、`checks.py`、`amounts.py`、错误码体系在本变更内 `git status` 均无输出 → 其中 `schemas.py` 的改动属**另一个 change** `contract-review-mvp-prefill`（加 2 个带默认值的可选请求字段），本 change 未触碰
 
 ## 4. 验证与交付
 
-- [ ] 4.1 对真实端点 `192.168.16.10:8080` 实测 `mode=review` 关思考前后的耗时与输出（记录 prompt / completion tokens），确认与设计文档 §4.6 的量级一致（预期 48.19s → 42.19s）
-- [ ] 4.2 核实关思考后 `mode=review` 响应**结构层面**与 1.3 基线逐字段一致（键集合、类型、语义），仅允许取值层面的非回归差异
-- [ ] 4.3 复验 §"已知取值差异"表的可重复性：对 `header.parties[].role` 再各跑若干次，确认关思考后取值收敛、现状侧持续波动（样本量小，结论表述保持保守）
-- [ ] 4.4 运行合同评审全量回归与两阶段既有测试，记录命令与结果（预期与基线同为 753 passed / 0 failed）
-- [ ] 4.5 执行 `./scripts/change_orchestrator.ps1 -Mode validate -ChangeName llm-disable-thinking` 通过严格校验
-- [ ] 4.6 知会 `translate` 责任人：其调用未携带 `response_format`，实测输出 25,782 字符中约 67% 为思考文本（44.08s）；关闭思考后为 11.21s 且输出纯译文。**本变更不代其修改**
+- [x] 4.1 对真实端点 `192.168.16.10:8080` 实测 `mode=review` 关思考前后的耗时与输出（记录 prompt / completion tokens），确认与设计文档 §4.6 的量级一致（预期 48.19s → 42.19s）→ 实测 **42.17s / 5,973 completion tokens**（改前基线 42.19s / 5,964），输出 head 为 `{`，零思考文本污染
+- [ ] 4.2 核实关思考后 `mode=review` 响应**结构层面**与 1.3 基线逐字段一致（键集合、类型、语义），仅允许取值层面的非回归差异 → **未完全达成**：顶层键与段数已核对一致（16 段），**未做逐字段自动化 diff**；该强度由 `tests/test_contract_review_prefill.py::test_review_response_shape_is_unchanged_and_has_no_mode_key`（键集合）间接覆盖。**如需强一致基线，建议另开任务补**
+- [x] 4.3 复验 §"已知取值差异"表的可重复性：对 `header.parties[].role` 再各跑若干次，确认关思考后取值收敛、现状侧持续波动（样本量小，结论表述保持保守）→ 3 次实测：关思考后收敛为「甲方」，契合 `prompts/contract_review.yaml:23` 的 few-shot
+- [x] 4.4 运行合同评审全量回归与两阶段既有测试，记录命令与结果（预期与基线同为 753 passed / 0 failed）→ `.venv\Scripts\python -m pytest tests/ -q` → **801 passed / 0 failed**（收口后含新增守护用例）；`tests/two_stage` → **469 passed**
+- [x] 4.5 执行 `./scripts/change_orchestrator.ps1 -Mode validate -ChangeName llm-disable-thinking` 通过严格校验 → 等价执行 `openspec validate llm-disable-thinking --strict` → `Change 'llm-disable-thinking' is valid`
+- [ ] 4.6 知会 `translate` 责任人：其调用未携带 `response_format`，实测输出 25,782 字符中约 67% 为思考文本（44.08s）；关闭思考后为 11.21s 且输出纯译文。**本变更不代其修改** → **未完成：属对外沟通事项，代码侧不涉及**。已在本 change 内固化守护断言防止被误改（见 3.3）
 
 ## 5. 明确不做（红线清单）
 
-- [ ] 5.1 不动 `app/capabilities/contract_review/two_stage/**`（零改动，不传参、不开关）
-- [ ] 5.2 不动 `mode=review` 的除关思考外的任何东西（包括但不限于prompt / 响应模型 / 检查逻辑 / 错误码 / 字段集合）
-- [ ] 5.3 不改动 `translate` 能力的任何代码与行为
-- [ ] 5.4 不改 `app/models/llm.py`，不在 `get_chat_model()` 上做全局默认
-- [ ] 5.5 不改动 `response_format` 结构化输出机制（与关思考分层，互不替代）
-- [ ] 5.6 不引入 `max_tokens` 或其它输出长度限制（本变更只处理思考模式）
+- [x] 5.1 不动 `app/capabilities/contract_review/two_stage/**`（零改动，不传参、不开关）
+- [x] 5.2 不动 `mode=review` 的除关思考外的任何东西（包括但不限于prompt / 响应模型 / 检查逻辑 / 错误码 / 字段集合）
+- [x] 5.3 不改动 `translate` 能力的任何代码与行为
+- [x] 5.4 不改 `app/models/llm.py`，不在 `get_chat_model()` 上做全局默认
+- [x] 5.5 不改动 `response_format` 结构化输出机制（与关思考分层，互不替代）
+- [x] 5.6 不引入 `max_tokens` 或其它输出长度限制（本变更只处理思考模式）
+
+## 6. 遗留与后续
+
+- **4.6 对外知会**：待与 `translate` 责任人沟通（不影响本 change 的代码闭环）。
+- **4.2 强一致基线**：当前仅有结构抽查，若后续需要逐字段对照，另开任务补基线快照。
+- **2.6 措辞修订**：已按"默认值即生效"落定，四个 yaml 保持不写入。
