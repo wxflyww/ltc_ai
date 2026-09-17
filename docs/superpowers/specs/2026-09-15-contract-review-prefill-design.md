@@ -148,12 +148,12 @@
 | 1 | 付款条件 | `payment_terms` | string | **整段原文**，不结构化拆分 |
 | 2 | 付款方式 | `payment_method` | string | 原文，如「电汇」 |
 | 3 | 服务内容及方式 | `service_content` | string | 原文 |
-| 4 | 服务有效期限（月） | `service_valid_months` | number | 单位月 |
+| 4 | 服务有效期限（月） | `service_valid_months` | string | **原文写法**（第十轮：原为 `number`） |
 | 5 | 服务级别（SLA） | `service_sla` | string | 原文 |
-| 6 | 服务开始时间 | `service_start_date` | date | |
-| 7 | 服务结束时间 | `service_end_date` | date | |
-| 8 | 现场服务次数 | `onsite_service_count` | number | |
-| 9 | 巡检次数 | `inspection_count` | number | |
+| 6 | 服务开始时间 | `service_start_date` | string | **原文写法**，不归一成 ISO 日期（第十轮：原为 `date`） |
+| 7 | 服务结束时间 | `service_end_date` | string | **原文写法**，不归一成 ISO 日期（第十轮：原为 `date`） |
+| 8 | 现场服务次数 | `onsite_service_count` | string | **原文写法**（第十轮：原为 `number`） |
+| 9 | 巡检次数 | `inspection_count` | string | **原文写法**（第十轮：原为 `number`） |
 
 > 页面上另有 合同编号 / 合同类型 / 签订部门 / 业务类型（汽车）——**不在 D-02 清单，不返回**。
 > 本组**不附** `evidence`（理由见 §5.1：`payment_terms` / `service_content` / `service_sla` 自身即整段原文）。
@@ -169,10 +169,10 @@
 | 里程碑（标准名） | `milestone_name` | string | 从 §5.2 的 13 个标准名中选，取不到为 `null`（不用空串）|
 | 里程碑（标准名 code） | `milestone_code` | string | 如 `begin`，与 name 配对 |
 | 里程碑（原文） | `milestone_text` | string | 付款条件里的原文描述，供用户核对 |
-| 里程碑序号 | `milestone_seq` | number | 付款阶段顺序，从 1 起 |
-| 计划完成时间 | `plan_finish_date` | date | |
-| 计划回款时间 | `plan_payment_date` | date | |
-| 回款金额 | `payment_amount` | number | **含税**，两位小数 |
+| 里程碑序号 | `milestone_seq` | **integer** | 付款阶段顺序，从 1 起。**全响应唯一的非字符串字段**（第十轮） |
+| 计划完成时间 | `plan_finish_date` | string | **原文写法**，不归一成 ISO 日期（第十轮：原为 `date`） |
+| 计划回款时间 | `plan_payment_date` | string | **原文写法**，不归一成 ISO 日期（第十轮：原为 `date`） |
+| 回款金额 | `payment_amount` | string | **原文写法**；原文写比例就返回比例、不折算（第十轮：原为 `number`） |
 | 依据 | `evidence` | object[] | 该行**全部字段**的原文出处，按出处**各列一条、去重**，**每条带章节位置**（元素结构见 §4.5）；拿不到为空数组 |
 
 > 表格里的「序号」列由合同系统按数组顺序生成，**不作为字段返回**。`milestone_seq` 回的是**该阶段在付款条件原文中的顺序**，供排序与核对；两者通常同序，但来源不同（一个由合同系统生成，一个来自原文）。
@@ -198,9 +198,9 @@
 > {
 >   "milestone_name": "启动",
 >   "milestone_text": "合同签订及预付款",
->   "plan_finish_date": "2026-08-15",
->   "plan_payment_date": "2026-08-25",
->   "payment_amount": 1159500.00,
+>   "plan_finish_date": "2026年8月15日",
+>   "plan_payment_date": "合同签订后7个工作日内",
+>   "payment_amount": "30%",
 >   "evidence": [
 >     { "section": "第四条 付款方式及条件", "quote": "合同签订后7个工作日内支付合同总额的30%" },
 >     { "section": "合同计划",             "quote": "2026年8月15日前完成合同签订" },
@@ -215,7 +215,7 @@
 
 | 页面标签 | JSON key | 类型 | 说明 |
 |---|---|---|---|
-| 合同额 | `contract_amount` | number | 含税，两位小数 |
+| 合同额 | `contract_amount` | string | **原文写法**（第十轮：原为 `number`） |
 | 币种 | `currency` | string | 如 `CNY` |
 
 > 本组**不附** `evidence`（理由见 §5.1）。
@@ -225,7 +225,7 @@
 | 页面标签 | JSON key | 类型 | 说明 |
 |---|---|---|---|
 | 申请类型 | `type` | enum | `履约保函` \| `履约保证金`，二选一 |
-| 申请金额 | `amount` | number | 含税，两位小数 |
+| 申请金额 | `amount` | string | **原文写法**；原文写比例就返回比例、不折算（第十轮：原为 `number`） |
 | 收款单位/受益人 | `payee` | string | 甲方开户名称 |
 | 银行名称 | `bank_name` | string | 甲方开户行 |
 | 银行账号 | `bank_account` | string | 甲方账号 |
@@ -236,9 +236,10 @@
 
 ### 4.5 通用约定
 
-- **类型列语义**：表中 `date` / `number` 表示**语义类型**，JSON 里一律按下面两条序列化（`date` → 字符串，`number` → 数字），不存在原生 date 类型。
-- **日期**：返回 `YYYY-MM-DD`（ISO 日期，不含时间与时区）。JSON 无原生日期类型，故序列化为字符串；**展示格式由合同系统自行格式化**。
-- **金额**：数字，含税，两位小数。
+- **类型口径（第十轮重写）**：**除 `milestone_seq`（`integer`）外，本响应所有业务字段都是 `string`**，承载原文原样摘录。表中写「**原文写法**」的字段，服务端**不做任何加工** —— 不换算、不去符号、不补或截断小数位、不归一日期。
+- **为什么不用 `number` / `date`（第十轮）**：值一旦被声明成 JSON 数字或 ISO 日期，**转换过程本身就是误差来源** —— `float` 会把模型输出的整数 `13` 序列化成 `13.0`（下游按整型反序列化即失败）；`int` 遇到原文 `13.5` 直接报错；而为满足 JSON number 语法，模型还得被迫丢掉货币符号与千分位、按类型补/截小数位。**类型与展示格式交由合同系统自行定夺。**
+- **对调用方的影响（第十轮）**：合同系统须全部按 `String` 接收（金额不要声明为 `BigDecimal` / `Integer` / `Long`，日期不要声明为 `Date`）。需要数值或绝对日期时自行解析，**换算口径（`"50%"` 要不要折成金额、`"1年"` 算几个月）由合同系统界定**。
+- **不在"原样"范围内的字段**：`currency`（`CNY`）与 `guarantee.type`（`履约保函` / `履约保证金`）属**分类编码**而非原文摘录，保持归一。
 - **`evidence` 元素结构（§4.2 / §4.4 通用）**：`{ "section": string | null, "quote": string }`
   - `section`：该条原文所在**章节 / 条款标题，取原文原样**（如 `"第四条 付款方式及条件"`、`"合同计划"`）；原文无标题结构时（如换行归一化后仍无标题的正文）为 `null`。
   - **`section` 取哪一级标题（已定）**：取**顶层条款标题**（如 `# 第四条 付款方式及条件`）。**不取子层级**——实测 `tmp/samples/c1.md` 归一化后有 16 个 `# 第N条` 顶层标题，但另有 26 个 `## N.M`（如 `## 1.1分阶段支付合同款：招标人分三次…`），这些子层级的内容**是正文段落而非章节名**，取下去会让 `section` 塞进一整句话。原文若只有一层标题，即取该层。
@@ -494,4 +495,21 @@
 | 3 | `response_formats.py` 那一半红线是否仍然有效 | **仍然有效**：预填 schema 独立成新模块 `prefill_response_formats.py`，复用 `response_formats.py` 的 `_nullable_string` / `_object` 构造习惯（import，不复制），**不改也不新增** `RESPONSE_FORMATS` 的任何条目。 |
 
 > 本轮**仍未改任何代码**。§10 与 §3.1 口径已收敛为「`schemas.py` 只允许这一处加性例外，其余一律不碰」。
+
+**2026-09-17（第十轮）：取值口径改为「原文原样摘录」—— 6 个数值字段字符串化 + 4 个日期字段去归一（本轮已改代码）**
+
+| # | 变更 | 涉及位置 |
+|---|---|---|
+| 1 | **用户定调**："不管是数字还是日期还是啥，都是从合同文本提取出来的，应该都保留为字符型；具体前端展示时的数据类型由合同系统自行定夺，避免我这边加工带来的误差"。举例：`service_valid_months` 原文写 `13.5` 时，若按整型处理会**直接报错** | §4.5 类型口径重写 |
+| 2 | **6 个 `number` 字段 → `string`**：`service_valid_months`、`onsite_service_count`、`inspection_count`、`payment_amount`、`contract_amount`、`guarantee.amount`；**4 个日期字段去除 `YYYY-MM-DD` 归一**（类型本就是 string）。**唯一例外 `milestone_seq` 保持整型** —— 它不是原文摘录，而是本链路生成的阶段流水号，且排序依赖数值比较 | §4.1、§4.2、§4.3、§4.4 表 |
+| 3 | **金额不换算（用户定）**："原样返回，由合同系统自行计算"。实测两个样例的付款条件**都只写比例**（c1 `50%/40%/10%`、c2 `20%/33%/13%/10%/17%/7%`）；保证金 c1 写 5%、c2 写固定额 `¥ 130000 元`。新规则下 `payment_amount` 直接返回 `"50%"`，**不再折算成 5246250** | §4.2 表 + 示例 |
+| 4 | **根因澄清（本地实测）**：原先响应里出现的 `13.0` **不是模型输出**，而是本地 Pydantic `float` 字段的序列化结果 —— `ContractInfo(service_valid_months=13)` → `{"service_valid_months": 13.0}`。字符串化后该问题从根上消失 | §4.5 |
+| 5 | **删除「不要千分位、不要"元"、不要货币符号」这条规则**：它本是**为满足 JSON number 语法**而存在（JSON 数字不允许带千分位与货币符号），属**语法约束冒充业务约束**。改成 string 后语法自由，模型才可能原样摘抄 | `prompts/contract_review.yaml` → `prefill.system` |
+| 6 | **兜底新增**：`_VerbatimModel` 基类启用 `coerce_numbers_to_str`。万一模型违反 strict schema 吐了数字，按**原值**字符串化（`13` → `"13"`），而不是让整次预填降级成 `failed`（26 个字段全空）。**它不做格式加工 —— 原值一字节不改，只把类型摆正** | `prefill_schemas.py` |
+| 7 | **实测验收**（真实样例 c1/c2 × 三个 scope，6 次全部 `ok`）：`contract_amount` → `"¥10492500.00"` / `"¥ 4690000元"`；`payment_amount` → 比例原样；`guarantee.amount` → `"5%"` / `"¥ 130000 元"`；`milestone_seq` 仍为整数；`service_valid_months` → `"1年"` | — |
+| 8 | **耗时未劣化**：重复 3 次取中位数，c1 `all` **8.8s**、c2 `all` **12.8s**，与改口径前（8.5s / 14.9s）同量级 —— 金额从数字变短、日期从 ISO 变长，输出 token 总量大致持平。⚠️ **首测曾得 10.3s / 16.3s 并据此误判"输出变长导致变慢"，复测证明那是共享推理服务上的单次噪声** | 接口文档 §7 |
+| 9 | **并发复测**：16 并发 p50 **26.7s**（0.56 份/秒，并行效率 29%），与改口径前同量级；"prod `timeout`=30s 在并发下必然击穿"的结论不变 | 接口文档 §11 |
+
+> ⚠️ **本轮是调用方可见的契约变更**，与第三～九轮的"纯文档轮"性质不同：金额与日期字段的**类型和取值形态都变了**。合同系统**必须把这几类字段按 `String` 接收**，且**不能再沿用"各行金额求和 = 合同额"做自检**（`payment_amount` 现在是比例字符串，应按"百分比之和 = 100%"校验）。
+> 相应变更已同步进 `contract-review-mvp-prefill` 的 spec delta、`tasks.md` 与联调文档 —— 该 change 尚未归档，delta 仍是提案，故**就地修订**而非另立 change；否则两个未归档 change 会留下互相矛盾的规格。
 

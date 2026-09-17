@@ -26,27 +26,27 @@ _FIELDS = {
    - payment_terms 付款条件：分期与条件条款的整段原文
    - payment_method 付款方式：支付手段（如"电汇"）
    - service_content 服务内容及方式：原文
-   - service_valid_months 服务有效期限（月）：数字
+   - service_valid_months 服务有效期限（月）：原文写法
    - service_sla 服务级别（SLA）：原文
-   - service_start_date 服务开始时间：YYYY-MM-DD
-   - service_end_date 服务结束时间：YYYY-MM-DD
-   - onsite_service_count 现场服务次数：数字
-   - inspection_count 巡检次数：数字""",
+   - service_start_date 服务开始时间：原文写法
+   - service_end_date 服务结束时间：原文写法
+   - onsite_service_count 现场服务次数：原文写法
+   - inspection_count 巡检次数：原文写法""",
     "contract_plan": """2) contract_plan（数组，每个付款阶段一项，每项 8 个字段）
    - milestone_name 里程碑标准名 / milestone_code 对应 code
-   - milestone_text 里程碑原文描述 / milestone_seq 阶段序号（从 1 起）
-   - plan_finish_date 计划完成时间：YYYY-MM-DD
-   - plan_payment_date 计划回款时间：YYYY-MM-DD
-   - payment_amount 回款金额：数字（含税，两位小数）
+   - milestone_text 里程碑原文描述 / milestone_seq 阶段序号（整数，从 1 起）
+   - plan_finish_date 计划完成时间：原文写法
+   - plan_payment_date 计划回款时间：原文写法
+   - payment_amount 回款金额：原文写法（原文只写比例时返回该比例，不要折算）
    - evidence：该行全部字段的原文出处，按出处各列一条、去重；每个元素是
      {"section": 顶层条款标题原文或 null, "quote": 原文片段（≤60字）}；
      一行通常 2-3 条（付款条件、合同计划章节或交付/验收条款、合同金额条款）""",
     "finance_info": '''3) finance_info（对象，2 个字段）
-   - contract_amount 合同额：数字（含税，两位小数）
+   - contract_amount 合同额：原文写法
    - currency 币种：如 "CNY"''',
     "guarantee": """4) guarantee（数组，支持多笔、不设上限，无则 []，每项 7 个字段）
    - type 申请类型：只能取 "履约保函" 或 "履约保证金"
-   - amount 申请金额：数字（含税，两位小数；原文写"按合同金额的5%收取"时按合同额计算）
+   - amount 申请金额：原文写法（原文写"按合同金额的5%收取"时返回 "5%"，不要折算）
    - payee 收款单位/受益人 / bank_name 银行名称 / bank_account 银行账号（甲方开户信息）
    - return_clause 归还条款：原文
    - evidence：同 contract_plan 的 evidence 结构""",

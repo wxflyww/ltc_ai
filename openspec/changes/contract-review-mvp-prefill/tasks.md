@@ -102,3 +102,38 @@
 - **§5 对外三项**（5.1 字段对齐 / 5.3 D-03 按钮标签 / 5.6 触发时机与快照）为与合同系统的对接动作，待联调窗口执行。
 - **3.4 的自动化缺口**：`evidence` 的「去重」「`quote` ≤ 60 字」目前仅靠 prompt 约束，若联调中发现质量问题，建议补断言而非继续放宽 prompt。
 - **5.2** 待用户补足样例合同后复测。
+
+## 10. 修订记录：取值口径改为"原文原样摘录"（第十轮，2026-09-17）
+
+**修订原因**：原设计对金额/日期做了类型与格式归一（金额返回数字、去掉千分位与"元"、日期统一 `YYYY-MM-DD`）。用户判定这会**引入加工误差**（如模型把 `13` 写成 `13.5` 时格式处理反而报错），要求**一律原文原样摘录**，格式与类型的解释权交回合同系统。
+
+**修订后口径**
+
+- 除 `milestone_seq`（`int`）外，**所有业务字段为 `str`**，原文原样摘录：不改写、不归一、不换算。
+- 金额：**保留货币符号 / "元" / 千分位**（如 `"¥10492500.00"`、`"¥ 4690000元"`）。
+- 比例：**原文只写比例就返回该比例**（如 `"50%"`），**不折算成金额**——由合同系统自行计算。
+- 日期：**照抄原文写法**（如 `"2026年3月1日"`），**不归一为 `YYYY-MM-DD`**。
+- 月数 / 次数：照抄（如 `service_valid_months` = `"1年"`）。
+
+**代码落点**
+
+- [x] 10.1 `prefill_schemas.py`：新增 `_VerbatimModel(BaseModel)` 基类（`ConfigDict(coerce_numbers_to_str=True)`），6 个原数字字段 + 4 个原日期字段全部改 `str | None`；`milestone_seq` 保留 `int | None`（唯一整数字段）
+- [x] 10.2 `prefill_response_formats.py`：删除 `_nullable_number()`；仅保留 `_nullable_integer()` 供 `milestone_seq`；金额/日期/计数一律 `_nullable_string()`
+- [x] 10.3 `prefill_prompts.py`：`_FIELDS` 描述由「：数字」/「YYYY-MM-DD」/「数字（含税，两位小数）」改为「：原文写法」/「原文写法（原文只写比例时返回该比例，不要折算）」
+- [x] 10.4 `prompts/contract_review.yaml`：`prefill` 条目的 system + user 规则改写 —— 删除「【日期】一律 YYYY-MM-DD」「【金额】一律返回数字」两条旧规则，新增「【一律字符串·原文原样】」「【序号】`milestone_seq` 是唯一返回整数的字段」，并给出正反例
+- [x] 10.5 **兜底设计**：`coerce_numbers_to_str=True` 使模型若仍吐数字（如 `13`）时**字符串化为 `"13"`**，而非让整个预填降级为 `prefill_status=failed`
+
+**根因澄清（曾误判）**：早期观测到的 `"service_valid_months": 13.0` **不是模型输出**，而是 Pydantic `float` 字段的序列化产物（`ContractInfo(service_valid_months=13)` → `{"service_valid_months": 13.0}`）。改为 `str` 从根上消除该现象。
+
+**测试**
+
+- [x] 10.6 `tests/test_contract_review_prefill.py`：`_ok_payload()` 改为字符串值（`"¥10,492,500.00"` / `"50%"` / `"5%"`）；新增 3 条用例 —— `test_only_milestone_seq_is_not_a_string`（断言除 `milestone_seq` 外全部为 `["string","null"]`）、`test_verbatim_fields_keep_the_original_wording`、`test_model_emitted_number_is_stringified_not_failed` → 该文件 **36 passed**
+- [x] 10.7 真实样例复测（`tmp/_verify_verbatim.py`）：`contract_amount` → `"¥10492500.00"` / `"¥ 4690000元"`；`payment_amount` → `["50%","40%","10%"]` / `["20%","33%","13%","10%","17%","7%"]`；`guarantee.amount` → `"5%"` / `"¥ 130000 元"`；`milestone_seq` → `1..3` / `1..6`；`service_valid_months` → `"1年"` / `None`
+
+**文档同步**
+
+- [x] 10.8 接口文档 `docs/integration/2026-09-16-contract-review-prefill-api-integration.md`：§4.2 新增「⚠️ 取值口径：原文原样摘录」前后对照表；§4.3–4.6 字段表 number→string、date→原文写法；§4.8 示例 JSON 与自检说明；§7 耗时（3 次取中位数：c1 d03 2.2s / d02 5.2s / all 8.8s；c2 d03 1.7s / d02 11.6s / all 12.8s）；§8 限制项 5 重写；§9 自检清单第 4 项改比例求和、新增第 6 项反序列化类型自检；§10 加工边界；§11 并发表按复测数据替换
+- [x] 10.9 设计文档 `docs/superpowers/specs/2026-09-15-contract-review-prefill-design.md`：§4.1–4.4 表格与 §4.2 示例 JSON 同步；§4.5 类型约定重写（说明为何不用 number/date）；§11 新增「第十轮」修订记录
+- [x] 10.10 本 change spec delta `specs/contract-review/spec.md`：删除「日期 YYYY-MM-DD / 金额两位小数数字」条款，改写为「除 `milestone_seq` 外全部业务字段 SHALL 为字符串、原文原样摘录、SHALL NOT 换算/剥离符号/归一日期」；场景重写为 `日期与金额按原文原样返回` / `数值类字段一律字符串` / `金额以比例约定时不折算` / `阶段序号是唯一的整数字段`；`基于已抽到事实推算而非臆造` 增加禁止金额推导
+
+**修订方式说明**：本次**不新开 OpenSpec change**，而是**就地修订在途的 `contract-review-mvp-prefill` delta** —— 避免出现两个未归档 change 持有互相矛盾的 spec。原「三项确认」（金额形态、调用方式、并发）已由用户在上一轮拍定，故 tasks 3.6「落实计算口径」中"优先推算"的表述**仅适用于日期与阶段序号的排序/关联，不再适用于金额**。

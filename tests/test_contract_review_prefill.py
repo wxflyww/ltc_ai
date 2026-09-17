@@ -106,6 +106,61 @@ def test_schema_fields_match_design_field_list_exactly():
     assert list(props["guarantee"]["items"]["properties"].keys()) == _EXPECTED["guarantee"]
 
 
+_VERBATIM_FIELDS = {
+    "contract_info": [
+        "service_valid_months", "onsite_service_count", "inspection_count",
+        "service_start_date", "service_end_date",
+    ],
+    "contract_plan": ["payment_amount", "plan_finish_date", "plan_payment_date"],
+    "finance_info": ["contract_amount"],
+    "guarantee": ["amount"],
+}
+
+
+def test_only_milestone_seq_is_not_a_string():
+    """取值契约：除 milestone_seq 外不得再出现 JSON number。
+
+    一旦声明成 number，模型为了满足 JSON 语法就必须去掉货币符号与千分位、
+    并按类型补齐或截断小数位 —— 那是**语法约束冒充业务约束**，是本机加工误差的来源。
+    """
+    props = _schema_of("all")["properties"]
+    for group, fields in _VERBATIM_FIELDS.items():
+        node = (
+            props[group]["items"]["properties"]
+            if group in ("contract_plan", "guarantee")
+            else props[group]["properties"]
+        )
+        for name in fields:
+            assert node[name]["type"] == ["string", "null"], f"{group}.{name}"
+    seq = props["contract_plan"]["items"]["properties"]["milestone_seq"]
+    assert seq["type"] == ["integer", "null"]
+
+
+def test_verbatim_fields_keep_the_original_wording():
+    """金额 / 日期保留原文写法：货币符号、千分位、比例、非 ISO 日期一律照抄，不换算。"""
+    dumped = PrefillPayload.model_validate({
+        "contract_info": {"service_start_date": "2025年3月1日", "service_valid_months": "13.5个月"},
+        "contract_plan": [{"milestone_seq": 1, "payment_amount": "¥10,492,500.00"}],
+        "finance_info": {"contract_amount": "¥4690000元"},
+        "guarantee": [{"amount": "5%"}],
+    }).model_dump()
+    assert dumped["contract_info"]["service_start_date"] == "2025年3月1日"
+    assert dumped["contract_info"]["service_valid_months"] == "13.5个月"
+    assert dumped["contract_plan"][0]["payment_amount"] == "¥10,492,500.00"
+    assert dumped["finance_info"]["contract_amount"] == "¥4690000元"
+    assert dumped["guarantee"][0]["amount"] == "5%"
+
+
+def test_model_emitted_number_is_stringified_not_failed():
+    """兜底：模型违反 strict schema 吐数字时按原值字符串化，不让 26 个字段一起降级 failed。"""
+    payload = PrefillPayload.model_validate({
+        "contract_info": {"service_valid_months": 13},
+        "finance_info": {"contract_amount": 10492500.0},
+    })
+    assert payload.contract_info.service_valid_months == "13"
+    assert payload.finance_info.contract_amount == "10492500.0"
+
+
 def test_evidence_is_object_array_with_section_and_quote():
     evidence = _schema_of("all")["properties"]["contract_plan"]["items"]["properties"]["evidence"]
     assert evidence["type"] == "array"
@@ -162,14 +217,15 @@ def _request(scope="all", md="正文"):
 
 
 def _ok_payload():
+    """模拟新取值口径下模型的输出：除 milestone_seq 外一律原文原样字符串。"""
     return {
         "contract_info": {"payment_terms": "分期", "payment_method": "电汇"},
         "contract_plan": [
-            {"milestone_name": "终验", "milestone_seq": 3, "payment_amount": 100.0},
-            {"milestone_name": "启动", "milestone_seq": 1, "payment_amount": 200.0},
+            {"milestone_name": "终验", "milestone_seq": 3, "payment_amount": "10%"},
+            {"milestone_name": "启动", "milestone_seq": 1, "payment_amount": "50%"},
         ],
-        "finance_info": {"contract_amount": 10492500.0, "currency": "CNY"},
-        "guarantee": [{"type": "履约保证金", "amount": 524625.0}],
+        "finance_info": {"contract_amount": "¥10,492,500.00", "currency": "CNY"},
+        "guarantee": [{"type": "履约保证金", "amount": "5%"}],
     }
 
 
@@ -178,7 +234,9 @@ def test_run_prefill_all_returns_four_groups_ok():
         data = run_prefill(_request("all"))
     dumped = data.model_dump()
     assert dumped["prefill_status"] == "ok"
-    assert dumped["prefill"]["finance_info"]["contract_amount"] == 10492500.0
+    assert dumped["prefill"]["finance_info"]["contract_amount"] == "¥10,492,500.00"
+    assert dumped["prefill"]["contract_plan"][0]["payment_amount"] == "50%"
+    assert dumped["prefill"]["guarantee"][0]["amount"] == "5%"
     assert len(dumped["prefill"]["guarantee"]) == 1
 
 
@@ -345,7 +403,7 @@ def test_prefill_call_carries_strict_schema_and_thinking_off():
     def fake_invoke(model, messages, response_format=None):
         seen["model"] = model
         seen["response_format"] = response_format
-        return ('{"finance_info": {"contract_amount": 1.0, "currency": "CNY"}, "guarantee": []}', {})
+        return ('{"finance_info": {"contract_amount": "¥1.00", "currency": "CNY"}, "guarantee": []}', {})
 
     with patch("app.capabilities.contract_review.service.invoke_model", fake_invoke):
         run_prefill(_request("d03"))
@@ -361,7 +419,7 @@ def test_prefill_requires_all_scope_top_level_keys():
 
     with patch(
         "app.capabilities.contract_review.service.invoke_model",
-        return_value=('{"finance_info": {"contract_amount": 1.0, "currency": "CNY"}}', {}),
+        return_value=('{"finance_info": {"contract_amount": "¥1.00", "currency": "CNY"}}', {}),
     ):
         with pytest.raises(ModelFormatError):
             _invoke_json_prompt(

@@ -100,7 +100,8 @@
 
 - `contract_info` SHALL 包含 `payment_terms`、`payment_method`、`service_content`、`service_valid_months`、`service_sla`、`service_start_date`、`service_end_date`、`onsite_service_count`、`inspection_count`。
 - `finance_info` SHALL 包含 `contract_amount`、`currency`。
-- 日期类字段 SHALL 序列化为 `YYYY-MM-DD` 字符串；金额类字段 SHALL 序列化为含税、两位小数的数字。
+- **除 `milestone_seq` 外的全部业务字段 SHALL 为字符串**，内容 SHALL 为合同原文的原样摘录：系统 SHALL NOT 换算金额、SHALL NOT 剥离货币符号与千分位、SHALL NOT 归一日期格式、SHALL NOT 补齐或截断小数位。`milestone_seq` SHALL 为整数，且 SHALL 是响应中唯一的非字符串业务字段。
+- 取值口径由合同系统自行消化：系统 SHALL NOT 代替调用方决定金额是否折算、日期是否转绝对时间。
 - 未取到的标量字段 SHALL 为 `null`，系统 SHALL NOT 以空字符串占位；`contract_plan` 与 `guarantee` 未取到时 SHALL 为空数组。
 - `payment_method` SHALL 抽取支付手段（如电汇、转账、汇票、承兑），`payment_terms` SHALL 抽取分期与条件条款的整段原文；两者仅有同一处原文时系统 SHALL NOT 整段重复，支付手段词归 `payment_method`、其余归 `payment_terms`。
 
@@ -131,11 +132,31 @@
 - AND `payment_terms` SHALL 包含分期与条件条款的整段原文
 - AND 系统 SHALL NOT 将同一整段原文同时填入两个字段
 
-#### Scenario: 日期与金额的序列化
+#### Scenario: 日期与金额按原文原样返回
 
-- WHEN 抽取到服务开始时间与合同额
-- THEN `service_start_date` SHALL 为 `YYYY-MM-DD` 形式的字符串
-- AND `contract_amount` SHALL 为含税、最多两位小数的数字
+- WHEN 合同原文以 `2025年3月1日` 写服务开始时间、以 `¥10,492,500.00` 写合同额
+- THEN `service_start_date` SHALL 为 `"2025年3月1日"`
+- AND `contract_amount` SHALL 为 `"¥10,492,500.00"`
+- AND 系统 SHALL NOT 将其归一成 `2025-03-01`，也 SHALL NOT 剥离货币符号或千分位
+
+#### Scenario: 数值类字段一律字符串
+
+- WHEN 合同原文写 `13.5个月`、`1年` 或 `¥ 4690000元`
+- THEN 对应字段 SHALL 返回该原文写法的字符串
+- AND 该字段 SHALL NOT 为 JSON number 类型
+- AND 系统 SHALL NOT 因原文写的是小数（如 `13.5`）而报错或降级
+
+#### Scenario: 金额以比例约定时不折算
+
+- WHEN 付款条件只写"支付合同款总额的 50%"而未写具体金额
+- THEN `payment_amount` SHALL 为 `"50%"`
+- AND 系统 SHALL NOT 按合同额换算出具体数字
+
+#### Scenario: 阶段序号是唯一的整数字段
+
+- WHEN 返回 `contract_plan`
+- THEN `milestone_seq` SHALL 为整数
+- AND 该字段 SHALL 为 `data.prefill` 中唯一的非字符串业务字段
 
 ### Requirement: 合同计划抽取与里程碑归一
 
@@ -167,11 +188,11 @@
 
 #### Scenario: 基于已抽到事实推算而非臆造
 
-- WHEN 付款条件给出比例且合同金额条款给出合同总额
-- AND 计算目标需要推导得出回款金额或计划回款时间
+- WHEN 某个字段需要推导才能得出（如计划回款时间）
 - THEN 系统 MAY 基于已抽到的事实推导该字段
 - AND 推导不出的字段 SHALL 为 `null`
 - AND 系统 SHALL NOT 生成没有原文依据的值
+- AND 金额类字段 SHALL NOT 被推导 —— 原文只写比例时 SHALL 原样返回该比例（见「金额以比例约定时不折算」）
 
 ### Requirement: 履约保证金多笔抽取
 
