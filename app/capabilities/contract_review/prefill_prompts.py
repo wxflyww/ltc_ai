@@ -35,12 +35,24 @@ _FIELDS = {
     "contract_plan": """2) contract_plan（数组，每个付款阶段一项，每项 8 个字段）
    - milestone_name 里程碑标准名 / milestone_code 对应 code
    - milestone_text 里程碑原文描述 / milestone_seq 阶段序号（整数，从 1 起）
-   - plan_finish_date 计划完成时间：原文写法
-   - plan_payment_date 计划回款时间：原文写法
    - payment_amount 回款金额：原文写法（原文只写比例时返回该比例，不要折算）
-   - evidence：该行全部字段的原文出处，按出处各列一条、去重；每个元素是
-     {"section": 顶层条款标题原文或 null, "quote": 原文片段（≤60字）}；
-     一行通常 2-3 条（付款条件、合同计划章节或交付/验收条款、合同金额条款）""",
+     以上四项**只从付款条件（分期与条件条款）里拆** —— 原始里程碑节点与金额都在付款条件。
+   - plan_finish_date 计划完成时间：按下列顺序找来源，取到即止
+     ① 原文有独立的「合同计划 / 进度计划」章节 → 取该章节里本阶段的预计完成时间
+     ② 没有该章节 → 取「交付 / 验收」相关条款里本阶段的完成时间
+     ③ 两处都没有 → null
+     值一律原文写法：可能是"2026年7月31日"，也可能是"自合同签订之日起120天（自然日）内"。
+   - plan_payment_date 计划回款时间：**只**从付款条件里取本阶段对应的时间表述
+     （如"初验后15个工作日内"），原文写法；付款条件里没有本阶段的时间表述 → null。
+   - ⛔ 这两个时间字段**都不要自己算**：不做日期加减、不把"120天"折成具体日期、
+     不用完成时间推算回款时间。算不出就返回 null，推算由调用方完成。
+   - evidence：该行全部字段的原文出处，按下列三个出处**各给一条、共 3 条**；每个元素是
+     {"section": 顶层条款标题原文或 null, "quote": 原文片段（≤60字）}：
+     ① 付款条件（里程碑名称与金额的来源）② 合同计划章节或交付/验收条款（完成时间的来源）
+     ③ 合同金额条款
+     某个出处**在原文里确实不存在**时，该条固定写 {"section": null, "quote": "无"}
+     （quote 就是"无"两个字）。只有通读全文确认原文确实没有该处内容才能写"无"；
+     抽取困难、看不清、不确定都**不算**"无"。""",
     "finance_info": '''3) finance_info（对象，2 个字段）
    - contract_amount 合同额：原文写法
    - currency 币种：如 "CNY"''',
@@ -59,8 +71,13 @@ _EXAMPLES = {
                      '"onsite_service_count": null, "inspection_count": null}}',
     "contract_plan": '{"contract_plan": [{"milestone_name": "启动", "milestone_code": "begin", '
                      '"milestone_text": "合同签订及预付款", "milestone_seq": 1, '
-                     '"plan_finish_date": null, "plan_payment_date": null, "payment_amount": null, '
-                     '"evidence": [{"section": "第四条 付款方式及条件", "quote": "合同签订后7个工作日内支付30%"}]}]}',
+                     '"plan_finish_date": "2026年1月20日", '
+                     '"plan_payment_date": "签订生效后10个工作日内", "payment_amount": "30%", '
+                     '"evidence": [{"section": "第四条 付款方式及条件", '
+                     '"quote": "签订生效后10个工作日内支付合同总金额的30%"}, '
+                     '{"section": "第五条 合同计划", "quote": "1 启动 预计完成时间：2026年1月20日"}, '
+                     '{"section": "第三条 合同金额", '
+                     '"quote": "合同总金额为人民币 ¥3,860,000.00 元"}]}]}',
     "finance_info": '{"finance_info": {"contract_amount": null, "currency": "CNY"}}',
     "guarantee": '{"guarantee": [{"type": "履约保证金", "amount": null, "payee": null, '
                  '"bank_name": null, "bank_account": null, "return_clause": null, '

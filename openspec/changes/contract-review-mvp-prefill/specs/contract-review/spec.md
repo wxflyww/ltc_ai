@@ -102,6 +102,7 @@
 - `finance_info` SHALL 包含 `contract_amount`、`currency`。
 - **除 `milestone_seq` 外的全部业务字段 SHALL 为字符串**，内容 SHALL 为合同原文的原样摘录：系统 SHALL NOT 换算金额、SHALL NOT 剥离货币符号与千分位、SHALL NOT 归一日期格式、SHALL NOT 补齐或截断小数位。`milestone_seq` SHALL 为整数，且 SHALL 是响应中唯一的非字符串业务字段。
 - 取值口径由合同系统自行消化：系统 SHALL NOT 代替调用方决定金额是否折算、日期是否转绝对时间。
+- `plan_finish_date`、`plan_payment_date`、`service_start_date`、`service_end_date` SHALL 为字符串，其值 SHALL NOT 被假定为可解析日期 —— 可能是绝对日期、相对表述或**事件起算**（如 `"自合同签订之日起120天（自然日）内"`、`"自系统上线并最终验收合格之日起计"`）。系统 SHALL NOT 为其做任何日期计算或推算。
 - 未取到的标量字段 SHALL 为 `null`，系统 SHALL NOT 以空字符串占位；`contract_plan` 与 `guarantee` 未取到时 SHALL 为空数组。
 - `payment_method` SHALL 抽取支付手段（如电汇、转账、汇票、承兑），`payment_terms` SHALL 抽取分期与条件条款的整段原文；两者仅有同一处原文时系统 SHALL NOT 整段重复，支付手段词归 `payment_method`、其余归 `payment_terms`。
 
@@ -146,6 +147,12 @@
 - AND 该字段 SHALL NOT 为 JSON number 类型
 - AND 系统 SHALL NOT 因原文写的是小数（如 `13.5`）而报错或降级
 
+#### Scenario: 日期字段未必是可解析日期
+
+- WHEN 合同原文以事件起算写服务开始时间（如"自系统上线并最终验收合格之日起计"）
+- THEN `service_start_date` SHALL 原样返回该句
+- AND 系统 SHALL NOT 将其归一成绝对日期，也 SHALL NOT 因其不可解析而置为 `null`
+
 #### Scenario: 金额以比例约定时不折算
 
 - WHEN 付款条件只写"支付合同款总额的 50%"而未写具体金额
@@ -161,6 +168,8 @@
 ### Requirement: 合同计划抽取与里程碑归一
 
 系统 SHALL 从付款条件中抽取付款阶段，并为每一阶段返回 `milestone_name`、`milestone_code`、`milestone_text`、`milestone_seq`、`plan_finish_date`、`plan_payment_date`、`payment_amount`、`evidence`。
+
+里程碑名称、描述、序号与 `payment_amount` SHALL 只从付款条件中抽取。两个时间字段的来源固定且互斥：`plan_finish_date` SHALL 按「独立『合同计划 / 进度计划』章节 → 交付 / 验收条款 → `null`」的顺序取，取到即止；`plan_payment_date` SHALL 只取自付款条件中该阶段对应的时间表述。系统 SHALL NOT 为这两个字段做任何日期推算。
 
 系统 SHALL 将合同中的任意写法按语义归一为固定里程碑枚举，该枚举 SHALL 为：`begin` 启动、`confirm` 环境确认、`deliver` 交付、`design` 设计、`develop` 开发、`end` 维护期、`finalaccept` 终验、`midmaintain` 阶段维护、`plan` 策划、`preaccept` 初验、`require` 需求、`test` 测试、`testrun` 试运行。系统 SHALL NOT 使用词表硬匹配或句式白名单，也 SHALL NOT 固化合同侧的写法；归一失败的 `milestone_name` 与 `milestone_code` SHALL 为 `null`。
 
@@ -186,12 +195,28 @@
 - THEN `contract_plan` SHALL 按 `milestone_seq` 升序排列
 - AND `milestone_seq` SHALL 从 1 起连续表示原文中的阶段顺序
 
-#### Scenario: 基于已抽到事实推算而非臆造
+#### Scenario: 计划完成时间的来源
 
-- WHEN 某个字段需要推导才能得出（如计划回款时间）
-- THEN 系统 MAY 基于已抽到的事实推导该字段
-- AND 推导不出的字段 SHALL 为 `null`
-- AND 系统 SHALL NOT 生成没有原文依据的值
+- WHEN 合同正文存在独立的「合同计划 / 进度计划」章节
+- THEN `plan_finish_date` SHALL 取自该章节中该阶段的预计完成时间
+- WHEN 不存在该章节但存在交付 / 验收相关条款
+- THEN `plan_finish_date` SHALL 取自该条款中该阶段的完成时间
+- WHEN 两者均不存在
+- THEN `plan_finish_date` SHALL 为 `null`
+
+#### Scenario: 计划回款时间的来源
+
+- WHEN 付款条件写有该阶段对应的时间表述（如"初验后15个工作日内"）
+- THEN `plan_payment_date` SHALL 为该表述的原文
+- WHEN 付款条件未写该阶段的时间表述
+- THEN `plan_payment_date` SHALL 为 `null`
+- AND 系统 SHALL NOT 用 `plan_finish_date` 加减推算出日期
+
+#### Scenario: 服务端不做日期推算
+
+- WHEN 合同原文以相对表述或事件起算给出时间（如"自合同签订之日起120天（自然日）内"）
+- THEN 相应字段 SHALL 原样返回该表述
+- AND 系统 SHALL NOT 换算成绝对日期、SHALL NOT 折算自然日或工作日、SHALL NOT 使用合同签订日期做运算
 - AND 金额类字段 SHALL NOT 被推导 —— 原文只写比例时 SHALL 原样返回该比例（见「金额以比例约定时不折算」）
 
 ### Requirement: 履约保证金多笔抽取
@@ -212,14 +237,16 @@
 
 ### Requirement: 预填原文依据标注章节位置
 
-`contract_plan` 与 `guarantee` 中的**每一行** SHALL 附 `evidence`，其元素结构 SHALL 为 `{ "section": string | null, "quote": string }`。系统 SHALL 按出处各列一条并去重；拿不到任何原文依据时 `evidence` SHALL 为空数组。
+`contract_plan` 与 `guarantee` 中的**每一行** SHALL 附 `evidence`，其元素结构 SHALL 为 `{ "section": string | null, "quote": string }`。`contract_plan` 每行的 `evidence` SHALL **固定包含 3 条**，分别对应：① 付款条件、② 合同计划章节或交付 / 验收条款、③ 合同金额条款。
+
+当某处出处在合同正文中**确实不存在**时，该条 SHALL 为 `{"section": null, "quote": "无"}`。`"无"` SHALL 表示"该处出处不存在"，SHALL NOT 表示"某字段没有取值"；系统 SHALL NOT 因抽取困难、看不清或不确定而填写 `"无"` —— 只有在通读全文确认原文没有该处内容时才允许。调用方 SHALL 以**全等**方式判定该标记。
 
 `section` SHALL 取该条原文所在章节 / 条款的**顶层标题原文**，SHALL NOT 取子层级标题或正文段落；原文无标题结构时 `section` SHALL 为 `null`。系统 SHALL NOT 预设 `section` 的枚举或标题白名单。`quote` SHALL 为取自该位置的原文片段，长度 SHALL NOT 超过 60 字。
 
 #### Scenario: 一行字段横跨多处原文
 
 - WHEN 某付款阶段的计划完成时间来自交付条款、回款金额来自合同金额条款与付款条件
-- THEN 该行 `evidence` SHALL 按出处各列一条
+- THEN 该行 `evidence` SHALL 固定包含 3 条，分别对应付款条件、合同计划章节或交付 / 验收条款、合同金额条款
 - AND 每条 SHALL 同时包含 `section` 与 `quote` 两个键
 - AND 同一出处 SHALL NOT 重复出现
 
@@ -235,11 +262,18 @@
 - THEN 相关出处条目的 `section` SHALL 为 `null`
 - AND 该条 `quote` SHALL 仍为可核对的原文片段
 
-#### Scenario: 未找到原文依据
+#### Scenario: 出处不存在时声明「无」
 
-- WHEN 某一行字段在合同正文中没有可定位的原文依据
-- THEN 该行 `evidence` SHALL 为空数组
-- AND 该行其余字段 SHALL 仍按未取到规则表达
+- WHEN 合同正文既无「合同计划」章节、也无交付 / 验收条款的时间约定
+- THEN 该行 `evidence` 的时间来源条目 SHALL 为 `{"section": null, "quote": "无"}`
+- AND 该行 `plan_finish_date` SHALL 为 `null`
+- AND 该行 `evidence` SHALL 仍为 3 条，SHALL NOT 因该处出处缺失而减少
+
+#### Scenario: 出处存在时给出原文片段
+
+- WHEN 某处出处在合同正文中存在
+- THEN 该条 `quote` SHALL 为该处原文片段
+- AND 该条 `quote` SHALL NOT 为 `"无"`
 
 ### Requirement: 预填输入换行归一化
 

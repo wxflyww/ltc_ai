@@ -193,6 +193,29 @@ def test_prefill_prompt_renders_for_every_scope():
             assert key in text
 
 
+def test_prefill_prompt_carries_the_time_source_rules():
+    """两个时间字段的来源规则必须落在 prompt 里 —— 这是第十一轮的口径契约，删掉即回归。"""
+    from app.capabilities.contract_review.prefill_prompts import build_prefill_messages
+
+    text = "".join(m.content for m in build_prefill_messages("d02", "第一条 总则"))
+    for phrase in ("plan_finish_date", "plan_payment_date", "合同计划", "交付", "不要自己算"):
+        assert phrase in text
+
+
+def test_prefill_prompt_renders_literal_braces_once():
+    """user 模板要过 `.format()`：模板里的 `{{...}}` 必须还原成单个 `{...}`。
+
+    踩坑记录：模板里写裸的 `{"section": ...}` 会让 `.format()` 去找名为 "section" 的
+    占位符并抛 KeyError；`run_prefill` 的兜底又把异常吞成 `prefill_status=failed`，
+    于是**一次 prompt 手误会静默降级成整份预填失败**。这条断言把坑钉死。
+    """
+    from app.capabilities.contract_review.prefill_prompts import build_prefill_messages
+
+    text = "".join(m.content for m in build_prefill_messages("d02", "正文"))
+    assert '{"section": null, "quote": "无"}' in text
+    assert "{{" not in text
+
+
 from app.capabilities.contract_review.schemas import ContractReviewRequest
 
 

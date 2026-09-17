@@ -137,3 +137,53 @@
 - [x] 10.10 本 change spec delta `specs/contract-review/spec.md`：删除「日期 YYYY-MM-DD / 金额两位小数数字」条款，改写为「除 `milestone_seq` 外全部业务字段 SHALL 为字符串、原文原样摘录、SHALL NOT 换算/剥离符号/归一日期」；场景重写为 `日期与金额按原文原样返回` / `数值类字段一律字符串` / `金额以比例约定时不折算` / `阶段序号是唯一的整数字段`；`基于已抽到事实推算而非臆造` 增加禁止金额推导
 
 **修订方式说明**：本次**不新开 OpenSpec change**，而是**就地修订在途的 `contract-review-mvp-prefill` delta** —— 避免出现两个未归档 change 持有互相矛盾的 spec。原「三项确认」（金额形态、调用方式、并发）已由用户在上一轮拍定，故 tasks 3.6「落实计算口径」中"优先推算"的表述**仅适用于日期与阶段序号的排序/关联，不再适用于金额**。
+
+## 11. 修订记录：两个时间字段的来源规则 + `evidence` 加入「无」声明（第十一轮，2026-09-17）
+
+**修订原因**
+
+1. **字段来源没定义清楚，导致实测出现"归属漂移"**。上一轮实测：同一份 `c1`、同一 `scope=d02`、同一套 prompt 连跑 5 次，`plan_finish_date` 命中从 3/3 掉到 0/3 就再没回来 —— 根因不是漏抽，而是 `plan_finish_date` 与 `plan_payment_date` **在原文里指向同一句话、我们没划互斥边界**，模型每次看得见那句话，只是这次记到 finish、下次记到 payment。
+2. **空数组无法区分"原文没有"与"我们没抽到"**。用户要求：原文没有时给出提示，而不是静默返回 `[]` / `null`。
+
+**修订后口径**
+
+- **里程碑名称 / 描述 / 序号 / `payment_amount` 只从付款条件取**（原始里程碑节点与金额都在付款条件里）。
+- **`plan_finish_date`**：按序取到即止 —— ① 有独立「合同计划 / 进度计划」章节 → 取该章节；② 无 → 取「交付 / 验收」条款；③ 都无 → `null`。
+- **`plan_payment_date`**：**只**取自付款条件里该阶段对应的时间表述（如"初验后15个工作日内"）；没有 → `null`。
+- **服务端不推算**（用户定调"原样返回，怎么计算是合同系统的事"）：不做日期加减、不把"120天"折成具体日期、不用完成时间推回款时间。**绝对基准日（合同签订日期）只供消费方使用。**
+- **`contract_plan` 每行 `evidence` 固定 3 条**：① 付款条件 ② 合同计划章节或交付 / 验收条款 ③ 合同金额条款。某处出处原文**确实不存在**时该条为 `{"section": null, "quote": "无"}`。
+- **`*_date` 字段名有误导性**：这四个字段值可能是绝对日期、相对表述或事件起算，调用方须先试解析、失败就原样展示。
+
+**连带收益：上一轮拟开的"派生字段例外"不必开** —— 两个时间字段回归原文摘录，第十轮那条「一律原文原样、不换算、不推算」的口径**一字不改**。
+
+**prompt 与代码落点**
+
+- [x] 11.1 `prefill_prompts.py`：`_FIELDS` 的 `contract_plan` 段重写 —— 加"里程碑四要素只从付款条件拆"、两个时间字段的三级来源、⛔ 禁止自己算、`evidence` 固定 3 条与 `"无"` 约定；`_EXAMPLES` 的 `contract_plan` 示例改为 3 条 `evidence` 的真实形态
+- [x] 11.2 `prompts/contract_review.yaml`：`prefill.system` 新增「【时间字段的来源】」「【不要自己算】」「【依据的出处固定】」三段；`prefill.user` 硬性要求新增两条（时间字段来源 + `evidence` 固定 3 条）。**`review` 的 7 条 prompt 零改动**（diff 仅命中 `prefill:` 段，已核验）
+- [x] 11.3 ⚠️ **踩坑修复**：`prompts.py:25` 对 **user 模板**做 `.format()`，模板里的裸 `{"section": null, "quote": "无"}` 被当成占位符 → `KeyError: '"section"'` → 被 `run_prefill` 的兜底 `except` 吞掉 → **整份预填静默变成 `prefill_status=failed`（HTTP 仍 200）**。修法：模板内写成 `{{...}}`
+- [x] 11.4 **零 schema 变更**：`prefill_schemas.py` 仅更新模块 docstring 说明（字段类型、键集合、`PrefillEvidence` 结构均未动）；`prefill_response_formats.py` 无改动
+
+**测试**
+
+- [x] 11.5 `tests/test_contract_review_prefill.py` **36 → 38 passed**，新增 2 条：
+  - `test_prefill_prompt_carries_the_time_source_rules` —— 两个时间字段的来源规则必须落在 prompt 里（防规则被误删）
+  - `test_prefill_prompt_renders_literal_braces_once` —— 断言渲染后 `{"section": null, "quote": "无"}` 复原为单个花括号、且无残留 `{{`（钉死 11.3 那个坑）
+- [x] 11.6 **真实样例复测（三条路径全部走通，`tmp/_verify_plan_dates.py` + 新增合成样例 `tmp/samples/c3.md`）**：
+
+  | 样例 | 路径 | 实测结果 |
+  |---|---|---|
+  | `c3`（合成，**有**独立「合同计划」章节） | 主路径 | 3 行 `plan_finish_date` 全部从「第五条 合同计划」摘到绝对日期（`2026年1月20日` / `7月31日` / `11月30日`）；`plan_payment_date` 全部取自付款条件；每行 `evidence` **正好 3 条**（付款条件 / 合同计划 / 合同金额） |
+  | `c1`（真实，**无**计划章节） | 交付条款路径 | `plan_finish_date` 从「第二条 交付和验收」摘到 `"自合同签订之日起120天（自然日）内"`；确实无时间的行返回 `null` + `{"section": null, "quote": "无"}` |
+  | `c2`（真实，交付时间指向附件） | 「无」路径 | 原文写"详见附件2《技术协议》" → `plan_finish_date` 全 `null`，每行第 2 条 `evidence` 均为 `{"section": null, "quote": "无"}` |
+
+- [x] 11.7 **归属漂移复测**：`c1` 同输入连跑 3 次，`plan_finish_date` **稳定 1/3 且永远是同一行**（改前为 3/3 → 0/3 → 0/3 的乱跳）→ 划定来源即治好。
+
+**文档同步**
+
+- [x] 11.8 接口文档 `docs/integration/2026-09-16-contract-review-prefill-api-integration.md`：§4.2 补"服务端只摘录不推算"；§4.3 两个服务时间字段加"可能是事件起算"+ `*_date` 未必是日期的警示块；§4.4 新增「⚠️ 两个时间字段的取值来源」表块（含"`plan_finish_date` 为 `null` 时回款时间无从推算"）；§4.7 重写为**固定 3 条 + `"无"` 约定 + 消费方全等判定规则表**；§4.8 示例改为真实响应形态（含 `"无"`）；§8 限制项 1/2/4 重写、新增第 8 条（空数组歧义）；§9 新增自检项 12/13/14；§10 第 3 步补两个时间字段的来源与"禁止推算"
+- [x] 11.9 设计文档 `docs/superpowers/specs/2026-09-15-contract-review-prefill-design.md`：§4.2 表格与出处对照表更新、新增「两个时间字段的口径」专题块（含"「无」按出处不按字段"、"为什么不给对象组加字段级 evidence"）；§4.5 新增 `*_date` 与"服务端不推算"两条，`evidence` 条改为固定 3 条；§11 新增「第十一轮」修订记录（9 条）
+- [x] 11.10 本 change spec delta `specs/contract-review/spec.md`：改 3 条 ADDED requirement —— ① `预填字段数据契约` 增加 `*_date` 字段未必可解析 + 新场景；② `合同计划抽取与里程碑归一` 增加来源规则，`基于已抽到事实推算而非臆造` 场景**替换**为 `计划完成时间的来源` / `计划回款时间的来源` / `服务端不做日期推算`（**取消了原"MAY 推导"的许可**）；③ `预填原文依据标注章节位置` 改为固定 3 条 + `"无"` 语义 + 2 个新场景。`openspec validate --strict` → `is valid`
+
+**修订方式说明**：本次**仍就地修订在途 delta，不新开 change** —— 这次是**技术约束而非偏好**：`openspec/specs/contract-review/spec.md` 里 **prefill / 预填出现 0 次**（该 change 未归档，delta 尚未合并），而在途 delta 用的是 `## ADDED Requirements`。新开一个 change 时，写 `MODIFIED` 会因 target requirement 不存在而 `validate` 失败，写 `ADDED` 又会与在途的 7 条同名冲突 —— **两条路都堵死**。
+
+**已知代价**：该 change 的 spec delta 已**第二次偏离 `a031153` 那版实现**，`openspec list` 的完成度计数会随本节勾选再变；归档时评审者需按 §10 / §11 两节回溯口径演进。

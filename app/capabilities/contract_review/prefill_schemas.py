@@ -6,6 +6,15 @@
 `int` 遇到原文 `13.5` 直接报错）。展示类型由合同系统自行定夺。
 
 `milestone_seq` 是例外：它不是原文摘录，而是本链路生成的阶段流水号，且排序依赖数值比较。
+
+两个时间字段的来源固定（2026-09-17 第十一轮），且**服务端不做任何推算**：
+`plan_finish_date` = 合同计划章节 → 交付/验收条款 → `null`；`plan_payment_date` = 只取自付款条件。
+它们的值可能是绝对日期、相对表述或事件起算，故 `*_date` 字段名有误导性 —— 调用方须先试解析、
+失败就原样展示。
+
+`evidence` 是**行级、按出处**的（`contract_plan` 每行固定 3 条）。某处出处原文确实不存在时，
+该条为 `{"section": null, "quote": "无"}` —— 「无」按**出处**而非按字段理解，否则会自相矛盾
+（同一行的 `payment_amount` 明明有依据）。本模块不含任何字段级抽取状态。
 """
 from typing import Literal
 
@@ -27,7 +36,11 @@ class _VerbatimModel(BaseModel):
 
 
 class PrefillEvidence(BaseModel):
-    """原文依据。section 取顶层条款标题原文，原文无标题结构时为 null。"""
+    """原文依据。section 取顶层条款标题原文，原文无标题结构时为 null。
+
+    `quote == "无"` 是**出处缺失的显式声明**（该处出处在原文里确实不存在），不是空值占位 ——
+    调用方须用**全等**判定，否则原文里的"无违约条款"会被误判成缺失。
+    """
 
     section: str | None = None
     quote: str = ""
