@@ -18,7 +18,7 @@ def _nullable_integer() -> dict[str, Any]:
 
 EVIDENCE_SCHEMA = _object({
     "section": _nullable_string(),
-    "quote": _nullable_string(max_length=60),
+    "quote": _nullable_string(max_length=300),
 })
 
 

@@ -241,7 +241,7 @@
 
 当某处出处在合同正文中**确实不存在**时，该条 SHALL 为 `{"section": null, "quote": "无"}`。`"无"` SHALL 表示"该处出处不存在"，SHALL NOT 表示"某字段没有取值"；系统 SHALL NOT 因抽取困难、看不清或不确定而填写 `"无"` —— 只有在通读全文确认原文没有该处内容时才允许。调用方 SHALL 以**全等**方式判定该标记。
 
-`section` SHALL 取该条原文所在章节 / 条款的**顶层标题原文**，SHALL NOT 取子层级标题或正文段落；原文无标题结构时 `section` SHALL 为 `null`。系统 SHALL NOT 预设 `section` 的枚举或标题白名单。`quote` SHALL 为取自该位置的原文片段，长度 SHALL NOT 超过 60 字。
+`section` SHALL 取该条原文所在章节 / 条款的**顶层标题原文**，SHALL NOT 取子层级标题或正文段落；原文无标题结构时 `section` SHALL 为 `null`。系统 SHALL NOT 预设 `section` 的枚举或标题白名单。`quote` SHALL 为取自该位置的原文片段，长度 SHALL NOT 超过 300 字；该长度 SHALL 为**上限而非目标** —— `quote` SHALL 取能完整表达该处内容的最短原文片段（通常为一句），SHALL NOT 为逼近上限而扩大摘录范围。
 
 #### Scenario: 一行字段横跨多处原文
 

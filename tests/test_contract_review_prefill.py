@@ -167,6 +167,23 @@ def test_evidence_is_object_array_with_section_and_quote():
     assert list(evidence["items"]["properties"].keys()) == ["section", "quote"]
 
 
+def test_evidence_quote_max_length_is_300():
+    """quote 长度上限 60 → 300（第十二轮）。上限放宽是供给侧的承诺，两组共用同一份。
+
+    这个值此前没有任何断言（tasks.md §9 把它记为自动化缺口），而它同时是发给模型的
+    strict 约束，改错就等于悄悄改了 prompt 的行为面，所以钉死。
+    """
+    from app.capabilities.contract_review.prefill_response_formats import EVIDENCE_SCHEMA
+
+    assert EVIDENCE_SCHEMA["properties"]["quote"]["maxLength"] == 300
+    schema = _schema_of("all")["properties"]
+    for group in ("contract_plan", "guarantee"):
+        quote = schema[group]["items"]["properties"]["evidence"]["items"]["properties"]["quote"]
+        assert quote["maxLength"] == 300
+        # 仍然是可空字符串 —— 放宽上限不应改变类型
+        assert quote["type"] == ["string", "null"]
+
+
 def test_schema_is_strict_and_named_per_scope():
     for scope in ("all", "d02", "d03"):
         fmt = get_prefill_response_format(scope)
