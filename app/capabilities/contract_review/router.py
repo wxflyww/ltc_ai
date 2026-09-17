@@ -1,4 +1,6 @@
-from fastapi import APIRouter, File, UploadFile
+from typing import Literal
+
+from fastapi import APIRouter, File, Form, UploadFile
 
 from app.capabilities.contract_review.prefill_service import run_prefill
 from app.capabilities.contract_review.schemas import AttachmentInput, ContractReviewRequest
@@ -9,8 +11,11 @@ from app.core.response import ApiResponse
 router = APIRouter(prefix="/api/v1", tags=["contract-review"])
 
 
-@router.post("/contract-review")
-def contract_review_endpoint(request: ContractReviewRequest) -> dict:
+def _dispatch(request: ContractReviewRequest) -> dict:
+    """按 mode 分流到预填或评审，并套上统一响应壳。
+
+    两个入口（JSON 与 Markdown 文件）共用这一处，保证 `mode` 的语义完全一致。
+    """
     if request.mode == "prefill":
         data = run_prefill(request)
     else:
@@ -19,6 +24,11 @@ def contract_review_endpoint(request: ContractReviewRequest) -> dict:
     body.setdefault("traceId", "")
     body.setdefault("duration_seconds", 0.0)
     return body
+
+
+@router.post("/contract-review")
+def contract_review_endpoint(request: ContractReviewRequest) -> dict:
+    return _dispatch(request)
 
 
 def _ensure_md_file(file: UploadFile, label: str) -> None:
@@ -38,6 +48,8 @@ async def _read_utf8_text(file: UploadFile, label: str) -> str:
 async def contract_review_upload_md_endpoint(
     contract_file: UploadFile = File(...),
     attachment_files: list[UploadFile] | None = File(default=None),
+    mode: Literal["review", "prefill"] = Form("review"),
+    prefill_scope: Literal["all", "d02", "d03"] = Form("all"),
 ) -> dict:
     _ensure_md_file(contract_file, "合同正文")
     contract_md = await _read_utf8_text(contract_file, "合同正文")
@@ -54,8 +66,10 @@ async def contract_review_upload_md_endpoint(
             text=await _read_utf8_text(attachment_file, f"附件{index}"),
         ))
 
-    data = review_contract(ContractReviewRequest(contract_md=contract_md, attachments=attachments))
-    body = ApiResponse(data=data).to_dict()
-    body.setdefault("traceId", "")
-    body.setdefault("duration_seconds", 0.0)
-    return body
+    request = ContractReviewRequest(
+        contract_md=contract_md,
+        attachments=attachments,
+        mode=mode,
+        prefill_scope=prefill_scope,
+    )
+    return _dispatch(request)

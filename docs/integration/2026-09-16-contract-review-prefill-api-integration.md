@@ -4,28 +4,34 @@
 >
 > 更新日期：2026-09-16
 >
-> 适用范围：`POST /api/v1/contract-review` 的 `mode=prefill` 分支，用于合同系统 D-02（合同管理员）/ D-03（销售）表单的智能预填。
+> 适用范围：`POST /api/v1/contract-review`（JSON）与 `POST /api/v1/contract-review/upload-md`（multipart 文件）的 `mode=prefill` 分支，用于合同系统 D-02（合同管理员）/ D-03（销售）表单的智能预填。两个入口的字段口径与响应结构完全一致。
 >
 > 配套文档：`2026-08-03-contract-review-legacy-api-temporary-integration.md`（评审接口，本文档的前置阅读）。
 
 ## 1. 接口概览
 
-预填与评审**共用同一个路径**，靠请求体里的 `mode` 分流：
+预填与评审**共用同一个入口**，靠请求里的 `mode` 分流。服务提供两个入口，**两者的 `mode` 语义、字段口径与响应结构完全一致**：
+
+| 入口 | 方法与路径 | 请求类型 | `mode` 传在哪 |
+|---|---|---|---|
+| JSON 入口（推荐） | `POST /api/v1/contract-review` | `application/json` | 请求体字段 |
+| Markdown 文件入口 | `POST /api/v1/contract-review/upload-md` | `multipart/form-data` | 表单字段 |
+
+```text
+POST <AI_BASE_URL>/api/v1/contract-review            # JSON：mode 在请求体
+POST <AI_BASE_URL>/api/v1/contract-review/upload-md  # multipart：mode 在表单字段
+```
 
 | `mode` | 作用 | 返回内容 |
 |---|---|---|
 | `review`（默认） | 合同评审 | `overall_result` / `check_time` / `checks[]` / `metrics[]` |
 | `prefill` | 智能预填 | `mode` / `prefill_status` / `prefill`（四组结构化字段） |
 
-```text
-POST <AI_BASE_URL>/api/v1/contract-review      # mode 由请求体决定
-```
-
 **要点**
 
 - 不传 `mode` 等价于 `mode=review`。**合同系统如果是老调用方，不需要做任何改动**，行为与现在完全一致。
 - 预填**不复用评审结果**：它只做结构化抽取，不返回 `checks[]`、不返回 `overall_result`、不返回 `metrics[]`。
-- `POST /api/v1/contract-review/upload-md`（multipart 文件入口）**只支持评审，不支持预填**。预填请统一走 JSON 入口。
+- 两个入口**都支持预填**，按取文方式二选一：已有 Markdown 文本走 JSON 入口，手上是 `.md` 文件走 multipart 入口。文件入口的字段与示例见 §3.5。
 
 ## 2. 鉴权与请求头
 
@@ -103,10 +109,35 @@ curl -X POST "<AI_BASE_URL>/api/v1/contract-review" \
 
 ### 3.4 请求注意事项
 
-- **`attachments` 对预填无效**。当前预填只从 `contract_md` 抽取，附件内容不参与。如果合同金额、付款计划被写在附件里，预填**抽不到**。
+- **附件只认「在正文里的」**。预填的输入是 `contract_md` 全文，服务端**不做切分**：
+  - ✅ **内嵌在正文里的附件**（正文中出现独立的 `附件一` / `附件二` 这类标题行）→ 与正文同等对待，**会**被抽取。
+  - ❌ **单独上传的附件**（JSON 的 `attachments` / multipart 的 `attachment_files`）→ 预填**不读**，传了不报错但会被静默忽略。
+  - 若合同金额、付款计划写在**外部附件**里（正文只写"详见附件2《技术协议》"这类引用），预填**抽不到** —— 请按「需人工填写」处理。
 - **正文换行**：如果上游把整份正文拼成了一整行、换行被写成字面量 `\n`，服务会自动还原为真换行（仅当正文内不含任何真换行时才做替换，不会误改正文里本就存在的字面量 `\n`）。合同系统**不需要自己做这层处理**，按上游给的文本原样提交即可。（实测样例中确有一份是"全文 1 行 + 字面量 `\n`"的形态，正是这种输入会被还原。）
 - **无跨请求版本控制**。合同内容变化时请重新提交完整正文；结果与业务版本的对应关系由合同系统自行维护。
 - 与评审接口一样，JSON 入口对 `contract_md` 只做最短长度校验，**纯空白正文不算有效合同**，请自行保证。
+
+### 3.5 Markdown 文件入口（multipart）
+
+```bash
+curl -X POST "<AI_BASE_URL>/api/v1/contract-review/upload-md" \
+  -H "X-API-Key: <API_KEY>" \
+  -H "X-Trace-Id: prefill-d03-002" \
+  -F "contract_file=@./合同正文.md;type=text/markdown" \
+  -F "mode=prefill" \
+  -F "prefill_scope=d03"
+```
+
+| 表单字段 | 类型 | 必填 | 默认 | 说明 |
+|---|---|---|---|---|
+| `contract_file` | file | 是 | — | 合同正文，**必须是 UTF-8 编码的 `.md`** |
+| `attachment_files` | file（可多个） | 否 | — | 附件，同样必须为 `.md`。**预填不读该字段**（见 §3.4） |
+| `mode` | string | 否 | `review` | 取 `prefill` 才进入预填。只接受 `review` / `prefill` |
+| `prefill_scope` | string | 否 | `all` | 同 §3.1。⚠️ **请总是显式传 `d02` 或 `d03`** |
+
+- 响应结构与 JSON 入口**完全一致**，见 §4。
+- `mode` 取值非法（例如写错成 `prefil`）会返回 **422 + `code=10001`**，**不会**静默落回评审。
+- 该入口原先只服务评审；**不传 `mode` 时行为与改造前完全一致**，老调用方无需改动。
 
 ## 4. 成功响应
 
@@ -446,6 +477,7 @@ curl -X POST "<AI_BASE_URL>/api/v1/contract-review" \
    语义相近但不在清单内的里程碑**一律返回 `null`**（`milestone_text` 仍保留原文描述，可据此人工选填）。
    - ⚠️ **若你方里程碑字典发生调整，请同步知会服务端** —— 否则我方会继续输出旧 `code`，你方按自己的字典匹配会**落空**，而**接口不会报错**（`prefill_status=ok`、HTTP 200），属静默不一致。
    - 匹配失败时请按「**需人工核对**」呈现，不要当成"合同没写"。清单与合同系统的自动同步（配置化 / 字典接口驱动）**当前版本尚未支持，将在后续版本提供**。
+10. **附件只认「在正文里的」**（规则细节见 §3.4）：预填只读 `contract_md` 全文，**单独上传的 `attachments` / `attachment_files` 一律不参与抽取**。正文里内嵌的 `附件一` / `附件二` 章节会被当作正文一并抽取；正文只写"详见附件2"、附件在外部时，相关字段**抽不到**，请按需人工填写。
 
 ## 9. 最小联调验收清单
 
@@ -464,6 +496,7 @@ curl -X POST "<AI_BASE_URL>/api/v1/contract-review" \
 13. **`"无"` 判定自检**：确认你方用**全等**判断（`"无".equals(quote.trim())`），不要用包含 —— 否则原文里的「无违约条款」会被误判成缺失。
 14. **`evidence` 条数自检**：`contract_plan` 每行应固定 **3 条**；少于 3 条说明该出处既没给原文也没标「无」，属异常。
 15. **里程碑映射自检**：确认返回的 `milestone_code` 能匹配上**你方的里程碑字典**。匹配不上的**按「需人工核对」处理**，并把该名称**反馈给服务端** —— 清单固化在服务端、不会自动同步（见 §8 第 9 条）；也可结合同一行的 `milestone_text`（原文描述）人工判断。
+16. **文件入口自检**：用 `POST /api/v1/contract-review/upload-md` 上传 `.md` 文件，表单带 `mode=prefill` + `prefill_scope=d03`，确认返回结构与 JSON 入口**完全一致**；再试一次**不带 `mode`** 的同一次上传，确认仍返回评审的 `checks[]`（老行为不变）；`mode` 写错（如 `prefil`）应返回 **422**，而不是评审结果。
 
 ## 10. 附：预填链路的处理边界
 

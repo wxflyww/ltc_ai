@@ -42,7 +42,7 @@
 
 ### Requirement: 智能预填调用形态
 
-系统 SHALL 在同一入口 `POST /api/v1/contract-review` 上提供智能预填形态：当 `mode` 为 `prefill` 时，系统 SHALL 只执行预填链路并 SHALL NOT 执行组织评审链路。预填响应 `data` SHALL 包含 `mode`、`prefill_status` 和 `prefill`，且 SHALL NOT 包含 `overall_result`、`check_time`、`checks`、`metrics`。系统 SHALL NOT 在 `mode` 为 `review` 的响应中回显 `mode`。
+系统 SHALL 在 `POST /api/v1/contract-review`（JSON 入口，`mode` 取自请求体）与 `POST /api/v1/contract-review/upload-md`（Markdown 文件入口，`mode` 取自表单字段）**两个入口**上提供智能预填形态，两个入口的 `mode` 语义、字段口径与响应结构 SHALL 完全一致。当 `mode` 为 `prefill` 时，系统 SHALL 只执行预填链路并 SHALL NOT 执行组织评审链路。预填响应 `data` SHALL 包含 `mode`、`prefill_status` 和 `prefill`，且 SHALL NOT 包含 `overall_result`、`check_time`、`checks`、`metrics`。系统 SHALL NOT 在 `mode` 为 `review` 的响应中回显 `mode`。
 
 系统 SHALL 接受可选请求参数 `prefill_scope`，取值 SHALL 仅为 `all`、`d02`、`d03`，未传时 SHALL 按 `all` 处理。`prefill_scope` SHALL 仅在 `mode` 为 `prefill` 时生效，SHALL NOT 影响 `mode` 为 `review` 的响应。`all` SHALL 抽取全部四组；`d02` SHALL 只抽取 `contract_info` 与 `contract_plan`；`d03` SHALL 只抽取 `finance_info` 与 `guarantee`。未被请求的组 SHALL 仍出现在 `data.prefill` 中且 SHALL NOT 省略键，并按未取到规则表达（标量字段为 `null`、数组为空数组）；系统 SHALL NOT 为"未被请求"引入区别于"未取到"的第三种表达。
 
@@ -60,12 +60,40 @@
 - THEN `data` SHALL NOT 包含 `overall_result`、`check_time`、`checks`、`metrics`
 - AND 系统 SHALL NOT 在预填链路上计算任何检查点结论
 
-#### Scenario: 预填形态下附件不参与抽取
+#### Scenario: 文件入口同样支持预填
+
+- WHEN 调用 `POST /api/v1/contract-review/upload-md`
+- AND 表单字段 `mode` 为 `prefill`
+- THEN 系统 SHALL 只执行预填链路并 SHALL NOT 执行组织评审链路
+- AND 响应 `data` SHALL 与 JSON 入口在相同 `mode` 与 `prefill_scope` 下完全一致
+
+#### Scenario: 文件入口不传 mode 时行为不变
+
+- WHEN 调用 `POST /api/v1/contract-review/upload-md`
+- AND 表单字段不含 `mode`
+- THEN 系统 SHALL 按 `mode=review` 处理
+- AND 响应 SHALL 与本次改造前逐字段一致
+
+#### Scenario: 文件入口 mode 取值非法
+
+- WHEN 表单字段 `mode` 取值不是 `review` 或 `prefill`
+- THEN 系统 SHALL 返回错误码 `10001`
+- AND 系统 SHALL NOT 执行组织评审链路或智能预填链路
+
+#### Scenario: 预填形态下单独上传的附件不参与抽取
 
 - WHEN 调用 `POST /api/v1/contract-review` 且 `mode` 为 `prefill`
 - AND 请求体包含 `attachments`
 - THEN 系统 SHALL 正常接收该字段
 - AND 系统 SHALL NOT 使用附件内容参与字段抽取
+- AND 调用 `POST /api/v1/contract-review/upload-md` 时，表单字段 `attachment_files` SHALL 同样被接收并被忽略
+
+#### Scenario: 正文内嵌的附件视同正文参与抽取
+
+- WHEN 合同正文 Markdown 内部含独立的附件章节标题（如 `附件一`）
+- AND `mode` 为 `prefill`
+- THEN 系统 SHALL 把该章节视同正文一并抽取
+- AND 系统 SHALL NOT 为附件切分或剔除正文内容
 
 #### Scenario: 未传 prefill_scope 时抽取全部字段
 

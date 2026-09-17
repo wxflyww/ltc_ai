@@ -18,6 +18,8 @@
 
 两个入口最终进入同一条评审流水线，返回结构一致。
 
+> ⚠️ 以上两个入口**均支持智能预填**：在请求体（JSON）或表单字段（multipart）里传 `mode=prefill` 即进入预填链路。本文档只描述评审（`mode=review`）的行为；预填的字段口径、响应结构与限制见 `2026-09-16-contract-review-prefill-api-integration.md`。**不传 `mode` 时行为与本文档完全一致。**
+
 服务基础地址由部署环境提供，以下以 `<AI_BASE_URL>` 表示。例如：
 
 ```text

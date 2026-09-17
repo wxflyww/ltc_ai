@@ -27,11 +27,11 @@
 
 ### Modified Capabilities
 
-- `contract-review`：在现有组织评审入口上新增预填调用形态（`mode=prefill`）、预填字段数据契约、里程碑语义归一、原文依据定位与预填失败兜底；`mode=review` 及既有评审行为保持不变。
+- `contract-review`：在两个既有入口（JSON 入口与 Markdown 文件入口）上新增预填调用形态（`mode=prefill`）、预填字段数据契约、里程碑语义归一、原文依据定位与预填失败兜底；`mode=review` 及既有评审行为保持不变。
 
 ## Impact
 
-- **API**：`POST /api/v1/contract-review` 请求新增可选 `mode` 与可选 `prefill_scope`；新增预填响应数据体。非法取值由现有请求校验机制统一返回 `code=10001` / HTTP 422，无需额外设计。`POST /api/v1/contract-review/upload-md` 本次不提供预填形态。
+- **API**：`POST /api/v1/contract-review` 请求体新增可选 `mode` 与可选 `prefill_scope`；`POST /api/v1/contract-review/upload-md` 表单新增同名两个可选字段（默认 `review` / `all`，**不传时行为与改造前逐字段一致**）；新增预填响应数据体。非法取值由现有请求校验机制统一返回 `code=10001` / HTTP 422，无需额外设计。
 - **代码**：`app/capabilities/contract_review/` 内新增预填 prompt 构造、预填编排与**独立响应模型**（`ContractReviewData` 零改动）；复用 `app/models/llm.py` 的模型适配与现有重试 / 错误码；`checks.py`、`amounts.py`、`_run_b1`、`_run_b4` 等检查点逻辑一行不动。预填与评审在路由层分流，走两条独立路径。
 - **依赖（跨 capability，不在本 change 内）**：预填正确性依赖"关闭模型思考模式"，该改动同时涉及 `contract_review` 与 `two_stage` 两条链路、并须显式**排除 `translate`**，故另立 change `llm-disable-thinking`（本 change 声明依赖，具体实施项见该 change）。本 change 自带的结构化输出（`response_format`）与 `required_keys` 校验不依赖它，可先独立落地。
 - **Prompt**：新增预填专用 prompt 资源；现有评审 prompt 不改。

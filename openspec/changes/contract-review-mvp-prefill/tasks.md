@@ -59,10 +59,10 @@
 
 ## 6. 明确不做
 
-- [x] 6.1 不新增独立接口，不改 `upload-md` 入口
-- [x] 6.2 不实现 `review` / `prefill` 之外的任何 `mode` 取值（非法取值由 `Literal` 校验 → 422）
+- [x] 6.1 不新增独立接口 —— 预填复用既有入口。⚠️ **第十三轮修订**：原文含"不改 `upload-md` 入口"，该半句**已作废**，`upload-md` 现新增 `mode` / `prefill_scope` 两个可选表单字段（默认可保证老调用方行为逐字段不变），见 §13
+- [x] 6.2 不实现 `review` / `prefill` 之外的任何 `mode` 取值（非法取值由 `Literal` 校验 → 422）。⚠️ **第十三轮补充**：`upload-md` 的表单字段 `mode` 同样走 `Literal` 校验，取值非法返回 422，**不再静默落回评审**
 - [x] 6.3 不动 `app/capabilities/contract_review/two_stage/**`（本 change 零改动；其中 `prepare_model.py` 的唯一改动属依赖 change `llm-disable-thinking`） → 提交时精确白名单，`two_stage/**` 零新增条目
-- [x] 6.4 不解析附件，不做附件与正文关联 → `test_prefill_ignores_attachments`
+- [x] 6.4 不解析**单独上传的**附件，不做附件与正文关联 → `test_prefill_ignores_attachments`。⚠️ **第十三轮澄清**：正文里**内嵌**的附件章节（如 `附件一` 标题行）视同正文参与抽取 —— 预填读的是 `contract_md` 全文、不做切分
 - [x] 6.5 不引入证据索引 / 覆盖度（含字段级抽取状态）/ 事实域等两阶段概念
 - [x] 6.6 不改动现有评审 prompt 与现有响应字段语义，不给 `ContractReviewData` 增加任何字段 → `test_review_response_shape_is_unchanged_and_has_no_mode_key`
 - [x] 6.7 不改动 `translate` 能力的任何行为（该能力由其他同事负责） → 并由 `tests/test_thinking_scope_guard.py::test_translate_call_stays_bare` 常驻守护
@@ -234,3 +234,34 @@
    中位数差 **−0.8s**，落在噪声量级（单发噪声可达 ±4s）→ **放宽上限对耗时无实际影响**（`c2` 多出约 300 字符 ≈ 165 tokens ≈ +1.1s，被正常波动淹没）。同一实验还**因果性地锁死了截断**：上限 60 时最长引文恰好等于 60、且有 4–6 条顶在边界上；放到 300 后同一批引文以 98 字完整输出。§12 实测表里的 17.3s 单发值也由此确认是噪声。
 
 **未同步的一处（有意）**：历史实施计划 `docs/superpowers/plans/2026-09-16-contract-review-mvp-prefill.md` 内嵌一份 prompt 快照，仍写 `≤60字`。该文件自 `a031153` 后**从未随口径演进更新**（第十、十一轮关键词命中 0 次），性质是**执行时的计划快照**而非活文档，故继续不动；口径以设计文档、spec delta 与接口文档为准。
+
+## 13. 修订记录：`upload-md` 入口支持预填 + 附件口径收敛（第十三轮，2026-09-17）
+
+**修订原因**：消费方/联调方按**文件上传**方式调用（`multipart`），而预填只在 JSON 入口提供 —— 两个入口语义不一致，会把"同一个功能要学两套调用方式"的成本推给对方，且将来补齐时对方还要再适配一次。**决定：现在补齐，两个入口语义完全一致。**
+
+**修订后口径**
+
+- `POST /api/v1/contract-review/upload-md` 新增**两个可选表单字段**：`mode`（默认 `review`）、`prefill_scope`（默认 `all`），与 JSON 入口**同名、同默认、同 `Literal` 校验**。
+- 两个入口**共用同一处分流函数**（`router._dispatch`），保证 `mode` 语义、字段口径与响应结构逐字段一致。
+- **`mode` 取值非法**（含错拼如 `prefil`）→ **422 + `code=10001`**，**不再静默落回评审**（此前 multipart 传 `mode` 会被 FastAPI 丢弃、HTTP 200 返回评审结果，是易误判的坑）。
+- **不传 `mode` 时行为与改造前逐字段一致** —— 老调用方零影响。
+
+**附件口径（用户拍板，本轮一并固化）**：「在正文里就当正文，不在就不管」。
+
+- 预填输入 = `contract_md` **整份全文**，服务端不切分、不截断（`prefill_prompts.py:101-113`）→ **正文内嵌的附件章节**（独立 `附件一` 标题行）与正文同等对待，**会**被抽取。
+- **单独上传的附件**（JSON `attachments` / multipart `attachment_files`）**不参与抽取**，传了不报错、静默忽略。
+- 顺带确认一个**对预填有利**的非对称：review 用 `split_embedded_attachments` 把 `附件N` 章节**从正文切出去**当独立文档，预填**不切**、整段留在上下文里。
+- ⚠️ **覆盖缺口（如实记录）**：`tmp/samples/` 的 c1 / c2 / c3 **都没有**内嵌附件章节 → **「附件在正文中」这条路径目前 0 覆盖**（属"没测过"，非"测过没问题"）。c2 的 `详见附件2《技术协议》` 属"正文引用外部附件"，即"不在就不管"那类。
+
+**改动清单**
+
+- [x] 13.1 `router.py`：抽出 `_dispatch(request)` 供两个入口共用；`upload-md` 新增 `mode` / `prefill_scope` 两个 `Form` 参数并透传到 `ContractReviewRequest`。**`review` 分支仍直接调用模块内 `review_contract`**（`tests/two_stage/test_prepare_api.py` 依赖该 patch 目标与调用次数）
+- [x] 13.2 `tests/test_contract_review_api.py`：新增 3 条 —— `..._prefill_mode_routes_to_prefill`（走预填且**不**调用 `review_contract`）、`..._defaults_to_review_mode`（不传 mode → `mode=review` / `prefill_scope=all`）、`..._rejects_unknown_mode`（422 + `10001`）
+- [x] 13.3 接口文档：头部适用范围与 §1 改为"两个入口皆支持"；新增 **§3.5 Markdown 文件入口**（表单字段表 + curl 示例 + 非法 mode 行为）；§3.4 附件口径改写为"只认正文里的"；§8 新增第 10 条；§9 新增第 16 条文件入口自检
+- [x] 13.4 评审接口文档（`2026-08-03-...`）§1 加交叉引用：两个入口均支持预填、不传 `mode` 行为不变
+- [x] 13.5 本 change `proposal.md`（Impact 与 Modified Capabilities）、spec delta（需求名下的入口范围 + 4 条 Scenario）、`tasks.md` §6 三条 + 本 §13
+- [x] 13.6 验证：`pytest tests/ -q` 全绿、`pytest tests/two_stage/ -q` **零回归**、`openspec validate --strict` 通过
+
+**没有新开 change 的理由**：主 spec `openspec/specs/contract-review/spec.md` 里**没有任何预填内容**（预填需求只活在在途 delta 中），新开 change 写 MODIFIED 会因找不到目标而 `validate` 失败、写 ADDED 会与在途需求重名冲突 → **只能就地修订在途 delta**（该结论在第十轮修订时已实测确认）。
+
+**未同步的一处（有意）**：`docs/superpowers/plans/2026-09-16-contract-review-mvp-prefill.md:933` 写有"`/contract-review/upload-md` 一行不改；预填不提供 multipart 形态"，属**执行时的计划快照**，按 §12 同一惯例不动。

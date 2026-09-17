@@ -96,3 +96,48 @@ def test_contract_review_upload_md_rejects_non_md_attachment_file():
     response = _client().post("/api/v1/contract-review/upload-md", files=files)
     assert response.status_code == 400
     assert response.json()["code"] == 10001
+
+
+def test_contract_review_upload_md_prefill_mode_routes_to_prefill():
+    payload = {"mode": "prefill", "prefill_status": "ok", "prefill": {"contract_plan": []}}
+    files = [("contract_file", ("contract.md", "# 合同\n正文".encode("utf-8"), "text/markdown"))]
+    with patch(
+        "app.capabilities.contract_review.router.run_prefill", return_value=payload
+    ) as prefill_mocked, patch(
+        "app.capabilities.contract_review.router.review_contract"
+    ) as review_mocked:
+        response = _client().post(
+            "/api/v1/contract-review/upload-md",
+            files=files,
+            data={"mode": "prefill", "prefill_scope": "d02"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["code"] == 0
+    assert body["data"] == payload
+    assert review_mocked.called is False
+    request = prefill_mocked.call_args.args[0]
+    assert request.contract_md == "# 合同\n正文"
+    assert request.mode == "prefill"
+    assert request.prefill_scope == "d02"
+
+
+def test_contract_review_upload_md_defaults_to_review_mode():
+    fake = ContractReviewData(overall_result="PASS", check_time="2026-07-09T10:00:00", checks=[])
+    files = [("contract_file", ("contract.md", "# 合同\n正文".encode("utf-8"), "text/markdown"))]
+    with patch("app.capabilities.contract_review.router.review_contract", return_value=fake) as mocked:
+        response = _client().post("/api/v1/contract-review/upload-md", files=files)
+
+    assert response.status_code == 200
+    assert response.json()["data"]["overall_result"] == "PASS"
+    request = mocked.call_args.args[0]
+    assert request.mode == "review"
+    assert request.prefill_scope == "all"
+
+
+def test_contract_review_upload_md_rejects_unknown_mode():
+    files = [("contract_file", ("contract.md", "正文".encode("utf-8"), "text/markdown"))]
+    response = _client().post("/api/v1/contract-review/upload-md", files=files, data={"mode": "prefil"})
+    assert response.status_code == 422
+    assert response.json()["code"] == 10001
