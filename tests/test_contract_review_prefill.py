@@ -83,19 +83,54 @@ def _schema_of(scope: str) -> dict:
 
 
 def test_scope_groups_match_with_design():
-    assert SCOPE_GROUPS["d02"] == ("contract_info", "contract_plan")
+    assert SCOPE_GROUPS["d02"] == ("contract_info", "contract_plan", "finance_info")
     assert SCOPE_GROUPS["d03"] == ("finance_info", "guarantee")
     assert SCOPE_GROUPS["all"] == ("contract_info", "contract_plan", "finance_info", "guarantee")
     assert get_prefill_top_level_keys("d03") == ["finance_info", "guarantee"]
 
 
+def test_finance_info_is_shared_by_d02_and_d03():
+    """`finance_info`（合同总额 + 币种）同属两个场景 —— 2026-09-18 定的口径。
+
+    D-02 的 `contract_plan[].payment_amount` 多为比例（如 "50%"），消费方必须有合同总额才能折算，
+    所以该组按「基础信息」归属，两个场景都返回。删掉 d02 里的 finance_info 即回归本缺陷。
+    """
+    assert "finance_info" in SCOPE_GROUPS["d02"]
+    assert "finance_info" in SCOPE_GROUPS["d03"]
+    assert set(SCOPE_GROUPS["d02"]) | set(SCOPE_GROUPS["d03"]) == set(SCOPE_GROUPS["all"])
+    assert "contract_amount" in _schema_of("d02")["properties"]["finance_info"]["properties"]
+
+    from app.capabilities.contract_review.prefill_prompts import build_prefill_messages
+
+    d02_text = "".join(m.content for m in build_prefill_messages("d02", "正文"))
+    assert "finance_info" in d02_text
+    assert "contract_amount" in d02_text
+
+
+def test_scope_note_is_derived_from_scope_groups():
+    """scope 说明里的组名必须从 `SCOPE_GROUPS` 派生，不能写死。
+
+    写死的话，改分组归属时说明文字会**悄悄与实际 schema 脱节**——模型只按说明办事，
+    schema 里有 finance_info 但说明里不提，模型照样不抽。
+    """
+    from app.capabilities.contract_review.prefill_prompts import _scope_note
+
+    for scope in ("all", "d02", "d03"):
+        note = _scope_note(scope)
+        for group in SCOPE_GROUPS[scope]:
+            assert group in note, f"{scope} 的 scope_note 漏了 {group}"
+        assert str(len(SCOPE_GROUPS[scope])) in note
+
+
 def test_schema_scope_only_exposes_requested_groups():
-    assert list(_schema_of("d02")["properties"].keys()) == ["contract_info", "contract_plan"]
+    assert list(_schema_of("d02")["properties"].keys()) == [
+        "contract_info", "contract_plan", "finance_info",
+    ]
     assert list(_schema_of("d03")["properties"].keys()) == ["finance_info", "guarantee"]
     assert list(_schema_of("all")["properties"].keys()) == [
         "contract_info", "contract_plan", "finance_info", "guarantee",
     ]
-    assert _schema_of("d02")["required"] == ["contract_info", "contract_plan"]
+    assert _schema_of("d02")["required"] == ["contract_info", "contract_plan", "finance_info"]
 
 
 def test_schema_fields_match_design_field_list_exactly():
@@ -286,6 +321,24 @@ def test_run_prefill_d03_blanks_unrequested_groups():
     assert dumped["prefill"]["contract_info"]["payment_terms"] is None
     assert dumped["prefill"]["contract_plan"] == []
     assert dumped["prefill"]["finance_info"]["currency"] == "CNY"
+
+
+def test_run_prefill_d02_keeps_contract_amount_but_blanks_guarantee():
+    """d02 必须带回合同总额（用于把 payment_amount 的比例折算成金额），但保证金属 d03。"""
+    with patch("app.capabilities.contract_review.prefill_service._invoke_json_prompt", return_value=_ok_payload()):
+        dumped = run_prefill(_request("d02")).model_dump()
+    assert dumped["prefill"]["finance_info"]["contract_amount"] == "¥10,492,500.00"
+    assert dumped["prefill"]["finance_info"]["currency"] == "CNY"
+    assert dumped["prefill"]["guarantee"] == []
+    assert dumped["prefill"]["contract_plan"][0]["payment_amount"] == "50%"
+
+
+def test_run_prefill_d02_asks_model_for_three_groups():
+    with patch("app.capabilities.contract_review.prefill_service._invoke_json_prompt", return_value=_ok_payload()) as mocked:
+        run_prefill(_request("d02"))
+    kwargs = mocked.call_args.kwargs
+    assert kwargs["required_keys"] == ["contract_info", "contract_plan", "finance_info"]
+    assert kwargs["response_format"]["json_schema"]["name"] == "contract_review_prefill_d02"
 
 
 def test_run_prefill_sorts_plan_by_milestone_seq():

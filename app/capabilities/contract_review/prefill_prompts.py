@@ -15,11 +15,21 @@ def normalize_contract_text(text: str) -> str:
     return text.replace("\\n", "\n")
 
 
-_SCOPE_NOTES = {
-    "all": "本次请求两组场景的全部字段，四组都要返回。",
-    "d02": "本次请求 D-02（合同管理员预填）字段，只需返回 contract_info 与 contract_plan 两组。",
-    "d03": "本次请求 D-03（销售预填）字段，只需返回 finance_info 与 guarantee 两组。",
+_SCOPE_SCENARIO = {
+    "all": "本次请求两组场景的全部字段",
+    "d02": "本次请求 D-02（合同管理员预填）字段",
+    "d03": "本次请求 D-03（销售预填）字段",
 }
+
+
+def _scope_note(scope: str) -> str:
+    """scope 说明：场景描述写死，**字段组名一律从 `SCOPE_GROUPS` 派生**。
+
+    刻意不写成字面量 —— 否则改动分组归属时（如 2026-09-18 把 finance_info 并入 d02）
+    说明文字会悄悄与实际 schema 脱节，而模型只按说明办事。
+    """
+    groups = SCOPE_GROUPS[scope]
+    return f"{_SCOPE_SCENARIO[scope]}，只需返回 {'、'.join(groups)} 共 {len(groups)} 组。"
 
 _FIELDS = {
     "contract_info": """1) contract_info（对象，9 个字段）
@@ -109,7 +119,7 @@ def prefill_prompt_kwargs(scope: str, contract_md: str) -> dict:
         "field_spec": "\n\n".join(_FIELDS[name] for name in groups),
         "json_example": _json_example(scope),
         "top_level_keys": "、".join(groups),
-        "scope_note": _SCOPE_NOTES[scope],
+        "scope_note": _scope_note(scope),
         "contract_md": contract_md,
     }
 

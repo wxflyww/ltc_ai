@@ -24,7 +24,7 @@
 - [x] 2.4 为预填结构化输出定义响应 Schema（`type: "json_schema"` + `strict: true`），四组键与 26 个字段名固定，`evidence` 元素固定为 `{section, quote}`；**所有字段进 `required`**，可空字段用 `["<type>", "null"]` 表达（依据设计文档 §4.6） → `test_schema_is_strict_and_named_per_scope`、`test_schema_fields_match_design_field_list_exactly`、`test_evidence_is_object_array_with_section_and_quote`、`test_schema_scope_only_exposes_requested_groups`
 - [x] 2.5 将 2.4 的 Schema 注册进 `app/capabilities/contract_review/response_formats.py` 的 `RESPONSE_FORMATS`，使预填 prompt **强制携带 `response_format`**（**格式约束**，作用是把 26 个字段变成机器强约束）。注：「关闭思考模式」是另一件事，由依赖 change `llm-disable-thinking` 负责，不在本 change 内 → **实现位置有意偏离**：未注册进 `RESPONSE_FORMATS`，改为独立模块 `prefill_response_formats.py`，经 `_invoke_json_prompt(response_format=...)` **显式传入**。目的：让 `RESPONSE_FORMATS` 继续只服务 review，预填 schema 与其物理隔离（该注册表是 review 与 two_stage 之外的共享外层文件，不碰即零风险）。效果等价 —— 实测预填调用确实携带 `json_schema`（`test_prefill_call_carries_strict_schema_and_thinking_off`）
 - [x] 2.6 调用 `_invoke_json_prompt` 时**必须传 `required_keys`**（四个顶层键）：schema 只约束格式，`required_keys` 是内容兜底，能在后端降级时显式抛错而非静默返回错误结构 → `prefill_service.py` 传 `required_keys=get_prefill_top_level_keys(scope)`；`test_prefill_requires_all_scope_top_level_keys` 验证缺键即抛 `ModelFormatError`
-- [x] 2.7 预填 prompt / schema 按 `prefill_scope` 分三套：`d02`（`contract_info` + `contract_plan`）、`d03`（`finance_info` + `guarantee`）各一套，`all` 由两者拼装生成（不重复维护字段定义） → `test_scope_groups_match_with_design`、`test_schema_scope_only_exposes_requested_groups`
+- [x] 2.7 预填 prompt / schema 按 `prefill_scope` 分三套：`d02`（`contract_info` + `contract_plan`；⚠️ **2026-09-18 第十四轮起再加 `finance_info`，见本文件 §14**）、`d03`（`finance_info` + `guarantee`）各一套，`all` 由两者拼装生成（不重复维护字段定义） → `test_scope_groups_match_with_design`、`test_schema_scope_only_exposes_requested_groups`
 
 ## 3. 抽取本体（D1：最大不确定性）
 
@@ -265,3 +265,35 @@
 **没有新开 change 的理由**：主 spec `openspec/specs/contract-review/spec.md` 里**没有任何预填内容**（预填需求只活在在途 delta 中），新开 change 写 MODIFIED 会因找不到目标而 `validate` 失败、写 ADDED 会与在途需求重名冲突 → **只能就地修订在途 delta**（该结论在第十轮修订时已实测确认）。
 
 **未同步的一处（有意）**：`docs/superpowers/plans/2026-09-16-contract-review-mvp-prefill.md:933` 写有"`/contract-review/upload-md` 一行不改；预填不提供 multipart 形态"，属**执行时的计划快照**，按 §12 同一惯例不动。
+
+## 14. 修订记录：`finance_info` 并入 `d02`（第十四轮，2026-09-18）
+
+**修订原因**：`prefill_scope=d02` 只返回 `contract_plan[].payment_amount` 的**比例原文**（实测 `"50%" / "40%" / "10%"`），**不带合同总额** → 合同系统拿到比例**算不出金额**。属分组归属疏忽。
+
+**用户拍板**：把**整组 `finance_info` 同时归入 `d02` 与 `d03`**，按「基础信息」而非「场景专有」归属；**不新增字段、不改字段名、不改取值口径、不做任何计算**。
+
+**修订后口径**
+
+- `SCOPE_GROUPS`：`d02` = `contract_info` + `contract_plan` + `finance_info`（三组）；`d03` = `finance_info` + `guarantee`（不变）；`all` = 四组（不变）。
+- **去重后仍是 26 个返回字段**（`finance_info` 的 2 个字段被两个 scope 共用，不重复计数）。
+- `d02` 下未被请求的组只剩 `guarantee`（空数组）；`d03` 下 `contract_info` 全 `null`、`contract_plan` 为空数组。四组外层键**一个不少**。
+- `finance_info` 的 schema、字段类型（`string`）与取值口径（`currency` 映射为 `CNY`、`contract_amount` 原文原样）**一字未改**。
+
+**改动清单**
+
+- [x] 14.1 `app/capabilities/contract_review/prefill_response_formats.py`：`SCOPE_GROUPS["d02"]` 加入 `finance_info`。schema / `json_example` / `top_level_keys` / `required_keys` 均由 `SCOPE_GROUPS` 自动派生，**无需手工同步**（已 grep 复核）
+- [x] 14.2 `app/capabilities/contract_review/prefill_prompts.py`：`scope_note` 由**硬编码 `_SCOPE_NOTES`** 改为**从 `SCOPE_GROUPS` 派生的 `_scope_note(scope)`** —— 消除「分组变了、prompt 说明没跟上」的漂移源
+- [x] 14.3 `tests/test_contract_review_prefill.py`：改 2 条（`test_scope_groups_match_with_design`、`test_schema_scope_only_exposes_requested_groups`），新增 4 条 —— `test_finance_info_is_shared_by_d02_and_d03`、`test_scope_note_is_derived_from_scope_groups`、`test_run_prefill_d02_keeps_contract_amount_but_blanks_guarantee`、`test_run_prefill_d02_asks_model_for_three_groups`
+- [x] 14.4 接口文档 `docs/integration/2026-09-16-contract-review-prefill-api-integration.md`：§3.2 分组表与说明、§4.5 标题与归属说明、§4.6/§4.8 `d02` 示例补 `finance_info`、§7 耗时、§9 自检第 4 条、§11.4 交互建议
+- [x] 14.5 设计文档 `docs/superpowers/specs/2026-09-15-contract-review-prefill-design.md`：§2 字段总数口径、§3.4 两表、§3.5 两张表与未请求组说明、§4.3 标题与归属说明、新增「第十四轮」修订记录
+- [x] 14.6 本 change：spec delta（`prefill_scope` 需求正文 + 新增 1 条 Scenario「d02 同时返回合同总额与付款比例」+ 字段契约需求补去重口径）与本 §14
+- [x] 14.7 验证：`pytest tests/ -q` → **830 passed / 0 failed**；prefill + API 相关 **52 passed**；`pytest tests/two_stage/ -q` 零回归；`openspec validate contract-review-mvp-prefill --strict` 通过
+
+**实测（新口径，`tmp/samples/c1.md`，重复 3 次取中位）**
+
+- `d02` 返回 `finance_info = { "contract_amount": "¥10492500.00", "currency": "CNY" }`，`payment_amount` 为 `"50%" / "40%" / "10%"` —— **比例与总额在同一响应里齐了**。
+- 耗时 `d02` **6.9s**（加组前 5.2s）、`d03` 3.1s、`all` 10.2s。
+
+**没有新开 change 的理由**：同 §11 / §13 —— 主 spec 里 prefill 出现 0 次，新 change 写 `MODIFIED` 无目标、写 `ADDED` 与在途需求重名，**只能就地修订在途 delta**。
+
+**未同步的一处（有意）**：历史实施计划 `docs/superpowers/plans/2026-09-16-contract-review-mvp-prefill.md` 内嵌的分组快照仍写 `d02 = contract_info + contract_plan`，属**执行时的计划快照**，按 §12 / §13 同一惯例不动；口径以设计文档、spec delta 与本文件为准。

@@ -44,7 +44,7 @@
 
 系统 SHALL 在 `POST /api/v1/contract-review`（JSON 入口，`mode` 取自请求体）与 `POST /api/v1/contract-review/upload-md`（Markdown 文件入口，`mode` 取自表单字段）**两个入口**上提供智能预填形态，两个入口的 `mode` 语义、字段口径与响应结构 SHALL 完全一致。当 `mode` 为 `prefill` 时，系统 SHALL 只执行预填链路并 SHALL NOT 执行组织评审链路。预填响应 `data` SHALL 包含 `mode`、`prefill_status` 和 `prefill`，且 SHALL NOT 包含 `overall_result`、`check_time`、`checks`、`metrics`。系统 SHALL NOT 在 `mode` 为 `review` 的响应中回显 `mode`。
 
-系统 SHALL 接受可选请求参数 `prefill_scope`，取值 SHALL 仅为 `all`、`d02`、`d03`，未传时 SHALL 按 `all` 处理。`prefill_scope` SHALL 仅在 `mode` 为 `prefill` 时生效，SHALL NOT 影响 `mode` 为 `review` 的响应。`all` SHALL 抽取全部四组；`d02` SHALL 只抽取 `contract_info` 与 `contract_plan`；`d03` SHALL 只抽取 `finance_info` 与 `guarantee`。未被请求的组 SHALL 仍出现在 `data.prefill` 中且 SHALL NOT 省略键，并按未取到规则表达（标量字段为 `null`、数组为空数组）；系统 SHALL NOT 为"未被请求"引入区别于"未取到"的第三种表达。
+系统 SHALL 接受可选请求参数 `prefill_scope`，取值 SHALL 仅为 `all`、`d02`、`d03`，未传时 SHALL 按 `all` 处理。`prefill_scope` SHALL 仅在 `mode` 为 `prefill` 时生效，SHALL NOT 影响 `mode` 为 `review` 的响应。`all` SHALL 抽取全部四组；`d02` SHALL 抽取 `contract_info`、`contract_plan` 与 `finance_info`；`d03` SHALL 抽取 `finance_info` 与 `guarantee`。**`finance_info` SHALL 由 `d02` 与 `d03` 两个 scope 共同返回** —— 它承载 `contract_amount` 与 `currency`，按「基础信息」归属，使 `d02` 的消费方在只拿到 `contract_plan[].payment_amount` 比例原文（如 `"50%"`）时，仍能取得合同总额以自行折算，SHALL NOT 要求消费方为此额外调用 `d03`。未被请求的组 SHALL 仍出现在 `data.prefill` 中且 SHALL NOT 省略键，并按未取到规则表达（标量字段为 `null`、数组为空数组）；系统 SHALL NOT 为"未被请求"引入区别于"未取到"的第三种表达。
 
 #### Scenario: 预填调用返回预填数据体
 
@@ -110,6 +110,15 @@
 - AND `contract_info` 的各标量字段 SHALL 为 `null`
 - AND `contract_plan` SHALL 为空数组
 
+#### Scenario: d02 同时返回合同总额与付款比例
+
+- WHEN 调用 `POST /api/v1/contract-review` 且 `mode` 为 `prefill`、`prefill_scope` 为 `d02`
+- THEN 系统 SHALL 抽取 `contract_info`、`contract_plan` 与 `finance_info`
+- AND `data.prefill.finance_info` SHALL 包含 `contract_amount` 与 `currency`
+- AND `data.prefill.guarantee` SHALL 为空数组
+- AND `data.prefill` SHALL 仍包含 `contract_info`、`contract_plan`、`finance_info`、`guarantee` 四组
+- AND 系统 SHALL NOT 对 `contract_plan[].payment_amount` 的比例原文做折算
+
 #### Scenario: prefill_scope 取值非法
 
 - WHEN 请求体的 `prefill_scope` 取值不是 `all`、`d02` 或 `d03`
@@ -124,7 +133,7 @@
 
 ### Requirement: 预填字段数据契约
 
-系统 SHALL 在 `data.prefill` 中返回四组结构，共 26 个返回字段：`contract_info`（对象，9 个字段）、`contract_plan`（数组，每项 8 个字段）、`finance_info`（对象，2 个字段）、`guarantee`（数组，每项 7 个字段）。系统 SHALL NOT 在预填响应中省略任何键。
+系统 SHALL 在 `data.prefill` 中返回四组结构，共 26 个返回字段：`contract_info`（对象，9 个字段）、`contract_plan`（数组，每项 8 个字段）、`finance_info`（对象，2 个字段）、`guarantee`（数组，每项 7 个字段）。**26 为去重后的字段总数** —— 其中 `finance_info` SHALL 由 `d02` 与 `d03` 两个 `prefill_scope` 共同返回（见「智能预填调用形态」），字段集合与取值口径不因归属调整而变化。系统 SHALL NOT 在预填响应中省略任何键。
 
 - `contract_info` SHALL 包含 `payment_terms`、`payment_method`、`service_content`、`service_valid_months`、`service_sla`、`service_start_date`、`service_end_date`、`onsite_service_count`、`inspection_count`。
 - `finance_info` SHALL 包含 `contract_amount`、`currency`。

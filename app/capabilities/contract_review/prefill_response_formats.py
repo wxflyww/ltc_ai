@@ -79,7 +79,10 @@ _GROUP_SCHEMAS: dict[str, Any] = {
 
 SCOPE_GROUPS: dict[str, tuple[str, ...]] = {
     "all": ("contract_info", "contract_plan", "finance_info", "guarantee"),
-    "d02": ("contract_info", "contract_plan"),
+    # `finance_info`（contract_amount + currency）同时属于 d02 与 d03：
+    # D-02 的 contract_plan[].payment_amount 多为比例（如 "50%"），消费方必须有合同总额才能折算成金额；
+    # 故该组按「基础信息」而非「场景专有」归属，两个场景都返回。（2026-09-18 定）
+    "d02": ("contract_info", "contract_plan", "finance_info"),
     "d03": ("finance_info", "guarantee"),
 }
 

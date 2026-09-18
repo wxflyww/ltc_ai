@@ -9,8 +9,8 @@
 ## What Changes
 
 - 在 `POST /api/v1/contract-review` 请求体新增**可选**参数 `mode`，取值仅两个：`review`（默认，行为与今天逐字段一致）/ `prefill`（只跑预填，不跑评审链路）。不新增独立接口、不新增网关白名单。
-- 请求体再新增**可选**参数 `prefill_scope`（`all` / `d02` / `d03`，默认 `all`），仅 `mode=prefill` 时生效：让 D-02 / D-03 两个场景各取所需，只抽自己那一半，未请求的组按未取到规则表达（仍返回、不省键）。实测 D-03 场景由 7.42s 降到 3.01s。
-- `mode=prefill` 返回独立的预填数据体：`mode` / `prefill_status` / `prefill`，其中 `prefill` 由四组构成——`contract_info`（9 字段）、`contract_plan`（数组，每项 8 字段）、`finance_info`（2 字段）、`guarantee`（数组，每项 7 字段），共 26 个返回字段。
+- 请求体再新增**可选**参数 `prefill_scope`（`all` / `d02` / `d03`，默认 `all`），仅 `mode=prefill` 时生效：让 D-02 / D-03 两个场景各取所需、只抽自己关心的组，未请求的组按未取到规则表达（仍返回、不省键）。实测 D-03 场景由 7.42s 降到 3.01s。
+- `mode=prefill` 返回独立的预填数据体：`mode` / `prefill_status` / `prefill`，其中 `prefill` 由四组构成——`contract_info`（9 字段）、`contract_plan`（数组，每项 8 字段）、`finance_info`（2 字段）、`guarantee`（数组，每项 7 字段），共 26 个返回字段。**`finance_info` 由 `d02` 与 `d03` 共用**（2026-09-18 第十四轮），26 为去重后的字段总数。
 - `mode=review` 的 `data` 段保持 4 个键（`overall_result` / `check_time` / `checks` / `metrics`），**不新增、不回显任何字段**；`mode` 只出现在预填响应里。
 - 里程碑按固定 13 个标准名做**语义归一**（靠语义理解，不做词表硬匹配），同时返回标准名、标准名 code、原文描述与原文序号，供业务人员核对。
 - `contract_plan` 与 `guarantee` 的**每一行**附 `evidence`，元素为 `{ section, quote }` 对象：按出处各列一条、去重，`section` 标注该原文片段所在的章节 / 条款标题，使业务人员能从"AI 依据"直接定位回合同原文。
@@ -37,7 +37,7 @@
 - **Prompt**：新增预填专用 prompt 资源；现有评审 prompt 不改。
 - **配置**：无新增配置项，不新增依赖。
 - **测试**：新增预填契约测试（两种 mode 的响应形状、`prefill_status` 各分支、`null` 与空数组表达、`evidence` 元素必带 `section` / `quote`）与换行归一化用例；**最强回归判据**是 `mode` 不传 / `=review` 时 `data` 段与今天逐字段一致。
-- **调用方**：D-02（合同管理员预填）与 D-03（销售预填）是**两个触发时机不同的场景，但共用同一个 `mode=prefill` 调用**——接口无状态、返回值不依赖调用时机，响应四组字段已按场景分组（D-02 取 `contract_info` + `contract_plan`，D-03 取 `finance_info` + `guarantee`），合同系统各取各的组回填表单；`section` / `quote` 用于"AI 依据"的原文定位展示。不拆接口的理由与已知代价见 `docs/superpowers/specs/2026-09-15-contract-review-prefill-design.md` §3.4。
+- **调用方**：D-02（合同管理员预填）与 D-03（销售预填）是**两个触发时机不同的场景，但共用同一个 `mode=prefill` 调用**——接口无状态、返回值不依赖调用时机，响应四组字段已按场景分组（D-02 取 `contract_info` + `contract_plan` + `finance_info`，D-03 取 `finance_info` + `guarantee`；**`finance_info` 为两场景共用** —— D-02 需要其中的 `contract_amount` 才能把 `payment_amount` 的比例原文折算成金额），合同系统各取各的组回填表单；`section` / `quote` 用于"AI 依据"的原文定位展示。不拆接口的理由与已知代价见 `docs/superpowers/specs/2026-09-15-contract-review-prefill-design.md` §3.4。
 - **不做**：不新增独立接口；不实现 `review` / `prefill` 之外的任何 mode 取值；**不动 `two_stage/**`（零改动，红线）**；不解析附件；不引入证据索引 / 覆盖度（含字段级抽取状态）/ 事实域等两阶段概念；不给 `ContractReviewData` 增加任何字段；**不改动 `translate` 能力的任何行为**；**`mode=review` 的既有链路除依赖 change 的"关思考"外不做任何改动**。
 
 > 详细字段清单、抽取与计算口径、四轮修订记录见 `docs/superpowers/specs/2026-09-15-contract-review-prefill-design.md`（本 change 按 AGENTS.md「design.md 可选」约定不另写 design.md）。
