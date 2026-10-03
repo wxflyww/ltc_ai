@@ -23,7 +23,7 @@ class ContractMeta(BaseModel):
 class RouteReason(BaseModel):
     """提级原因（合同系统已生成的人话原文，接口照搬不润色）。"""
 
-    text: str
+    text: str = Field(min_length=1)
 
 
 class RiskRegisterItem(BaseModel):

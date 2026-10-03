@@ -17,7 +17,7 @@
 - **AND** 系统 SHALL NOT 发起任何模型调用
 
 ### Requirement: 输入契约四组数据
-请求体 SHALL 包含四组数据：`contract_meta`（整组可选，字段全 optional，后续 CRM 客户字段以新增可选字段方式向后兼容扩展）、`route_reason`（可选，`text` 为合同系统已生成好的人话原文）、`risk_register[]`（只含高风险项，12 字段全部"有就照搬、没有就不传"）、`opinions[]`（必填，可为空数组；每条含 `node_name`/`approver_name`/`role`/`action`/`comment` 必填与 `submitted_at` 建议字段，`action` SHALL 为 `pass`/`conditional`/`reject` 枚举）。通用约定：缺值给空不省键（`null`/`[]`）；所有文本原样传递，接口只引用不加工；接口对数组顺序与内容零要求，不做过滤、重排或业务正确性判断。
+请求体 SHALL 包含四组数据：`contract_meta`（整组可选，字段全 optional，后续 CRM 客户字段以新增可选字段方式向后兼容扩展）、`route_reason`（可选，传入时 `text` SHALL 为非空的合同系统已生成人话原文，空串属未定义格、按非法请求以 422+10001 拒绝）、`risk_register[]`（只含高风险项，12 字段全部"有就照搬、没有就不传"）、`opinions[]`（必填，可为空数组；每条含 `node_name`/`approver_name`/`role`/`action`/`comment` 必填与 `submitted_at` 建议字段，`action` SHALL 为 `pass`/`conditional`/`reject` 枚举）。通用约定：缺值给空不省键（`null`/`[]`）；所有文本原样传递，接口只引用不加工；接口对数组顺序与内容零要求，不做过滤、重排或业务正确性判断。
 
 #### Scenario: contract_meta 整组缺省
 - **WHEN** 请求未提供 `contract_meta` 或其中任一字段
@@ -56,8 +56,8 @@
 - **AND** 系统 SHALL NOT 生成或改写任何应对措施或决策文本
 
 ### Requirement: 防幻觉五条铁律
-系统 SHALL 在服务端强制以下规则，而非仅依赖 Prompt：
-1. **数字零生成**：金额、比例、期限等一律原文引用，不解析、不换算、不四舍五入、不润色；
+五条铁律的强制层级：规则 1（限阿拉伯数字 token）、规则 3、规则 5 SHALL 有服务端校验兜底；规则 2、规则 4 为 Prompt 层约束，服务端不强制。规则本身如下：
+1. **数字零生成**：金额、比例、期限等一律原文引用，不解析、不换算、不四舍五入、不润色；服务端对两处 AI 生成文本做阿拉伯数字 token 抽验：输出中出现的每个数字 SHALL 在规范化输入全文中逐字存在，否则判生成失败、按规则 3 的丢弃/降级路径处理；中文数字表述与单位换算改写不在抽验射程（change design.md D6），仅由 Prompt 约束；
 2. **事实单点归属**：两处 AI 生成文本只做话题级引用，不重复展开装配区已有的数字、条款与影响；约束对象是事实而非观点，意见摘要照写人的主张；
 3. **source_refs 溯源**：每条 AI 结论 SHALL 携带指向输入字段路径的来源引用；服务端校验，无引用或引用悬空（指向不存在的输入路径）的结论 SHALL 直接丢弃，丢弃 SHALL NOT 阻塞装配区返回；总述被丢弃时 `review_summary.text=null`，意见摘要被丢弃时该条 `summary=null`，并分别在 `degraded_sections` 以 `review_summary.model`/`opinion_details.model` 标记；
 4. **总述形容词铁律**：评价性修饰必须可溯源到输入字段原文，溯源不到只说事实；CRM 字段暂缓接入期间总述不写客户评价；
@@ -68,6 +68,11 @@
 - **THEN** 系统 SHALL 丢弃该总述，输出 `review_summary.text=null`
 - **AND** `degraded_sections` SHALL 包含 `review_summary.model`
 - **AND** `key_concerns` 与 `opinion_details` 装配内容 SHALL 正常返回
+
+#### Scenario: 含编造数字的 AI 结论被丢弃
+- **WHEN** 模型返回的总述或某条意见摘要含有未在规范化输入全文中逐字出现的阿拉伯数字 token（编造或抄错）
+- **THEN** 系统 SHALL 判该条结论生成失败：总述 → `review_summary.text=null` 且 `degraded_sections` 含 `review_summary.model`；意见摘要 → 该条 `summary=null` 且 `degraded_sections` 含 `opinion_details.model`
+- **AND** 装配区内容 SHALL 正常返回，该响应 SHALL NOT 写入缓存
 
 #### Scenario: 存在不通过意见时总述中性化
 - **WHEN** `opinions` 中存在 `action=reject` 的意见
@@ -94,7 +99,7 @@
 - **AND** 响应 SHALL NOT 携带部分生成的 `data`
 
 ### Requirement: 输入 hash 缓存与模型调用口径
-系统 SHALL 对规范化后的请求体计算内容哈希作为缓存键，命中时直接返回既有整包响应；`opinions`/`risk_register` 任何新增变更 SHALL 自动失效缓存，无需合同系统通知。模型调用 SHALL 与现行能力共用 `get_chat_model()` 单例且只消费 `bind()` 返回的新对象，SHALL NOT 修改 `app/models/llm.py`；关闭思考 SHALL 走 `model.bind(extra_body={"chat_template_kwargs": {"enable_thinking": False}})`；SDK 层 `max_retries=0`，业务层仅解析失败重试 1 次。
+系统 SHALL 对规范化后的请求体计算内容哈希作为缓存键，命中时直接返回既有整包响应；`opinions`/`risk_register` 任何新增变更 SHALL 自动失效缓存，无需合同系统通知。`degraded_sections` 含 `.model` 标记（AI 结论因服务端校验失败被丢弃）的响应 SHALL NOT 写入缓存，同一输入下次请求 SHALL 重新生成；空态降级由输入决定，可安全缓存。模型调用 SHALL 与现行能力共用 `get_chat_model()` 单例且只消费 `bind()` 返回的新对象，SHALL NOT 修改 `app/models/llm.py`；关闭思考 SHALL 走 `model.bind(extra_body={"chat_template_kwargs": {"enable_thinking": False}})`；SDK 层 `max_retries=0`，业务层仅解析失败重试 1 次。
 
 #### Scenario: 相同输入命中缓存
 - **WHEN** 两个逐字段相同的请求先后到达
@@ -115,5 +120,5 @@
 
 #### Scenario: 回归测试全绿
 - **WHEN** 运行 `pytest tests/` 与 `pytest tests/two_stage/`
-- **THEN** 现有用例 SHALL 全绿（基线 838 + 490，允许只增不减）
+- **THEN** 现有用例通过数相对立项基线 SHALL 只增不减，失败总数 SHALL NOT 因本 change 增加（已知环境性失败见 tasks.md §0/§6 登记）
 - **AND** 新增 `tests/test_review_summary_*.py` SHALL 全部通过

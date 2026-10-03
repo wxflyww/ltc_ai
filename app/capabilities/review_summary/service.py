@@ -1,15 +1,16 @@
 """评审智能总结业务：装配区 + 两处 AI 生成 + 服务端铁律校验 + 空态降级 + 缓存。
 
-分层（设计文档 §2.2 / §2.3 / §5.1，change design.md D4）：
+分层（设计文档 §2.2 / §2.3 / §5.1，change design.md D4/D6）：
 
 - **装配区**（`key_concerns`、`opinion_details` 骨架）纯确定性、零模型参与，输入原文照搬；
 - **AI 生成只有两处**：`review_summary.text`（总述）与 `opinion_details[].summary`（意见摘要，
   一次调用批量生成，按 index 一一对应）；
-- **五条铁律在服务端强制**，不只靠 prompt：source_refs 无引用/悬空即丢弃，存在 reject 时
-  总述含正面定性即判失败；丢弃只影响该 AI 字段，不阻塞装配区；
+- **铁律 1/3/5 在服务端强制**（数字 token 抽验、source_refs 悬空即丢弃、reject 时正面定性判失败），
+  2/4 由 prompt 约束；违反服务端规则的只丢该 AI 字段，不阻塞装配区；
 - **错误码复用** 20001（调用失败）/ 20002（超时）/ 20003（格式异常），不新增。
 """
 import json
+import re
 from typing import Any
 
 from app.capabilities.review_summary.cache import get_cached, make_cache_key, set_cached
@@ -134,9 +135,10 @@ def _build_panel(request: ReviewSummaryRequest) -> ReviewSummaryData:
     # 2) AI 生成两处（共用一次 bind 出来的模型对象）
     valid_refs = _collect_valid_refs(request)
     valid_ref_set = set(valid_refs)
+    corpus = _input_number_corpus(request)
     model = _bound_model()
-    review_summary = _generate_summary(request, model, valid_refs, valid_ref_set, degraded)
-    _apply_opinion_summaries(request, opinion_details, model, valid_refs, valid_ref_set, degraded)
+    review_summary = _generate_summary(request, model, valid_refs, valid_ref_set, corpus, degraded)
+    _apply_opinion_summaries(request, opinion_details, model, valid_refs, valid_ref_set, corpus, degraded)
 
     return ReviewSummaryData(
         review_summary=review_summary,
@@ -342,6 +344,22 @@ def _refs_are_valid(refs: Any, valid_ref_set: set[str]) -> bool:
     return all(isinstance(ref, str) and ref.strip() in valid_ref_set for ref in refs)
 
 
+# 铁律 1 服务端抽验：AI 文本中的阿拉伯数字 token 必须能在规范化输入全文逐字找到。
+# 覆盖「编造/抄错数字」主事故形态；中文数字（"两期"）与单位换算改写（"120 天"→"4 个月"）
+# 不在射程（change design.md D6），由 prompt 第一道防线兜底。带 % 的 token 整串比对，
+# "15%" 不会被输入里的 "15.5%" 放行；短数字借长数字子串蒙混（如日期里的 "25"）属已知宽松。
+_NUMBER_TOKEN = re.compile(r"\d+(?:\.\d+)?%?")
+
+
+def _input_number_corpus(request: ReviewSummaryRequest) -> str:
+    """数字核对语料 = 规范化请求体 JSON 全文（与缓存键同源，覆盖所有输入字段）。"""
+    return json.dumps(request.model_dump(mode="json"), ensure_ascii=False)
+
+
+def _numbers_are_verifiable(text: str, corpus: str) -> bool:
+    return all(token in corpus for token in _NUMBER_TOKEN.findall(text))
+
+
 def _has_reject(request: ReviewSummaryRequest) -> bool:
     return any(opinion.action == "reject" for opinion in request.opinions)
 
@@ -361,6 +379,7 @@ def _generate_summary(
     model: Any,
     valid_refs: list[str],
     valid_ref_set: set[str],
+    corpus: str,
     degraded: set[str],
 ) -> ReviewSummarySection:
     if not _has_summary_input(request):
@@ -383,6 +402,10 @@ def _generate_summary(
         return _discard_summary(degraded, "text 为空或非字符串")
     if not _refs_are_valid(refs, valid_ref_set):
         return _discard_summary(degraded, f"source_refs 无引用或悬空：{_dumps(refs)}")
+    if not _numbers_are_verifiable(text, corpus):
+        return _discard_summary(
+            degraded, f"总述数字未在输入原文逐字出现：{_dumps(_NUMBER_TOKEN.findall(text))}"
+        )
     if _has_reject(request) and _has_positive_tone(text):
         return _discard_summary(degraded, "存在不通过意见但总述含正面定性")
     return ReviewSummarySection(text=text.strip(), source_refs=[ref.strip() for ref in refs])
@@ -394,6 +417,7 @@ def _apply_opinion_summaries(
     model: Any,
     valid_refs: list[str],
     valid_ref_set: set[str],
+    corpus: str,
     degraded: set[str],
 ) -> None:
     """批量生成意见摘要并就地写回骨架；逐条校验，单条不合规只丢该条。"""
@@ -425,7 +449,12 @@ def _apply_opinion_summaries(
         item = by_index.get(position)
         summary = item.get("summary") if item else None
         refs = item.get("source_refs") if item else None
-        if isinstance(summary, str) and summary.strip() and _refs_are_valid(refs, valid_ref_set):
+        if (
+            isinstance(summary, str)
+            and summary.strip()
+            and _refs_are_valid(refs, valid_ref_set)
+            and _numbers_are_verifiable(summary, corpus)
+        ):
             detail.summary = summary.strip()
         else:
             discarded += 1

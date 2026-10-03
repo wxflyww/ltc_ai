@@ -6,6 +6,7 @@
 ## 0. 收口说明
 
 > 本节为 §4/§5 收口证据。基线口径以窗口 A 报告为准（只增不减）；`.venv` Python 3.11.9、`PYTHONPATH=.` 全量运行。
+> ⚠️ 本节数字为 W4 收尾时点快照；归档前补强（§6）后最新证据以 §6.4 为准。
 
 - **本 change 自有测试**：`tests/test_review_summary_*.py`（7 个文件）**115 passed / 0 failed**。
 - **全量回归 `pytest tests/`**：**989 passed / 20 failed / 1 skipped**（窗口 A 基线 890 → 只增不减 ✓）。
@@ -49,3 +50,13 @@
 - [x] 5.2 `openspec.cmd validate review-summary-api --strict` 输出 is valid
 - [x] 5.3 `.workbuddy/memory/` 当日日志记录立项与实施结论、必要时更新 `MEMORY.md` 长期条目
 - [ ] 5.4 真实 vLLM 端点联调（非首版验收前置，登记为上线前补验）：demo 样例全链路跑通，记录耗时与 token；缓存命中/失效各验一次
+
+## 6. 归档前补强（2026-10-03，本窗口）
+
+> 背景：§0 验收观察发现铁律 1 的 spec 承诺（"服务端强制"）超出实际实现（当时仅 Prompt 层）。经用户选定"归档前补完"，先补代码再归档，避免不实措辞随 delta 提升为正式 spec。
+
+- [x] 6.1 数字抽验（TDD 先行）：新增 `tests/test_review_summary_number_guard.py` 8 用例（RED 阶段 6 failed + 2 条正面控制通过），再在 `service.py` 实现 `_NUMBER_TOKEN`/`_input_number_corpus`/`_numbers_are_verifiable`，总述与逐条意见摘要两处接入，失败走 D4 丢弃/降级；语料=规范化请求体 JSON（与缓存键同源）
+- [x] 6.2 `RouteReason.text` 收紧为 `Field(min_length=1)`：空串 → 422+10001，schema 层与 API 层用例各 1（含在 6.1 的 8 用例内）
+- [x] 6.3 spec 措辞如实化：铁律前言改为分层表述（1 限阿拉伯数字 token/3/5 服务端兜底，2/4 Prompt 约束）、新增「含编造数字的 AI 结论被丢弃」场景、缓存条款补 `.model` 降级不写缓存、输入契约补 `route_reason.text` 非空、回归场景基线措辞去掉硬编码只增不减；design.md 补 D6（抽验范围 + 两处已知宽松 + 时机决策）；proposal.md 同步铁律分工与回归口径措辞
+- [x] 6.4 重测证据：`tests/test_review_summary_*.py` 8 文件 **123 passed**（§0 基线 115 + 新增 8）；`pytest tests/` **997 passed / 20 failed / 1 skipped**（§0 基线 989，只增不减；20 failed 仍全为 `test_m2_signature_replay.py` 19 + `test_m2_signature_diagnostic.py` 1 的缺快照环境性失败，分组计数核对非 m2 失败 = 0）；`pytest tests/two_stage/` **526 passed / 20 failed**（与 §0 一致）
+- [x] 6.5 `openspec.cmd validate review-summary-api --strict` → is valid（见本窗口令执行记录）
