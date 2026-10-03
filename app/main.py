@@ -8,6 +8,7 @@ from app.capabilities.contract_review.router import router as contract_review_ro
 from app.capabilities.contract_review.two_stage.prepare_router import (
     router as contract_review_prepare_router,
 )
+from app.capabilities.review_summary.router import router as review_summary_router
 from app.capabilities.translate.router import router as translate_router
 
 
@@ -35,6 +36,7 @@ def create_app(register_middleware: bool = True) -> FastAPI:
     register_exception_handlers(app)
     app.include_router(contract_review_router)
     app.include_router(contract_review_prepare_router)
+    app.include_router(review_summary_router)
     app.include_router(translate_router)
 
     @app.get("/health")
