@@ -3,6 +3,7 @@ import time
 
 from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
+from openai import APITimeoutError
 from prometheus_client import Counter, Histogram
 
 from app.core.config import get_settings
@@ -29,6 +30,11 @@ def get_chat_model() -> BaseChatModel:
         base_url=s.base_url,
         temperature=s.temperature,
         timeout=s.timeout,
+        # 禁用 openai SDK 的隐藏重试（默认 DEFAULT_MAX_RETRIES=2）：
+        # SDK 会把读超时当可重试错误静默重发，导致一次超时 invoke 实际发出 3 个
+        # HTTP 请求、服务端算力 ×3，且总等待膨胀到 timeout×3。重试策略一律交回
+        # 业务层（translate/two_stage 各有自建退避；MVP 对超时不重试）。
+        max_retries=0,
         api_key=s.api_key or "no-key",
     )
     return _chat_model
@@ -53,7 +59,10 @@ def invoke_model(
             resp = model.invoke(messages)
         else:
             resp = model.invoke(messages, response_format=response_format)
-    except TimeoutError as e:
+    except (TimeoutError, APITimeoutError) as e:
+        # openai SDK 的读超时抛 APITimeoutError（langchain_openai 再包一层
+        # OpenAITimeoutError，同样是 APITimeoutError 子类），它不是内置
+        # TimeoutError 的子类，必须显式捕获，否则会穿透成 500/29999。
         llm_calls_total.labels(model=model_name, status="timeout").inc()
         raise ModelTimeoutError(str(e)) from e
     finish_reason = str((getattr(resp, "response_metadata", None) or {}).get("finish_reason", "")).lower()

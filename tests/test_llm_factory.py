@@ -78,6 +78,68 @@ def test_invoke_model_timeout_raises_model_timeout_error():
         llm.invoke_model(fake_model, [MagicMock()])
 
 
+def test_get_chat_model_disables_sdk_hidden_retries(monkeypatch):
+    """max_retries=0：禁止 openai SDK 对读超时静默重试（否则 timeout×3）。"""
+    monkeypatch.setenv("LTC__LLM__API_KEY", "env-llm-key")
+    with patch("app.models.llm.ChatOpenAI") as mock_cls:
+        mock_cls.return_value = MagicMock(name="model")
+        llm.get_chat_model()
+        assert mock_cls.call_args.kwargs["max_retries"] == 0
+
+
+def _httpx_request():
+    import httpx
+
+    return httpx.Request("POST", "http://192.168.16.10:8080/v1/chat/completions")
+
+
+def _api_timeout_error():
+    from openai import APITimeoutError
+
+    return APITimeoutError(request=_httpx_request())
+
+
+def test_langchain_openai_timeout_error_capture_surface():
+    """若环境的 langchain-openai 提供 OpenAITimeoutError，必须落在捕获面内。
+
+    本地 venv（langchain-openai 1.3.3）没有这个类（超时直接抛 openai.APITimeoutError）；
+    容器（1.6.2）有，且继承 openai.APITimeoutError，故 `except (TimeoutError, APITimeoutError)`
+    能覆盖两条路径。
+    """
+    import importlib
+
+    from openai import APITimeoutError
+
+    module = importlib.import_module("langchain_openai.chat_models.base")
+    cls = getattr(module, "OpenAITimeoutError", None)
+    if cls is None:
+        pytest.skip("当前 langchain-openai 无 OpenAITimeoutError（1.3.3 环境）")
+    assert issubclass(cls, APITimeoutError)
+
+
+def test_invoke_model_wrapped_timeout_raises_model_timeout_error():
+    """langchain-openai 包装后的超时（APITimeoutError 子类）同样要转成 ModelTimeoutError。"""
+    from openai import APITimeoutError
+
+    class _WrappedTimeout(APITimeoutError):  # 模拟 langchain_openai.OpenAITimeoutError
+        pass
+
+    fake_model = MagicMock()
+    fake_model.invoke.side_effect = _WrappedTimeout(
+        request=_httpx_request()
+    )
+    with pytest.raises(ModelTimeoutError):
+        llm.invoke_model(fake_model, [MagicMock()])
+
+
+def test_invoke_model_api_timeout_raises_model_timeout_error():
+    """SDK 读超时（非内置 TimeoutError）必须转成 ModelTimeoutError → 20002/504。"""
+    fake_model = MagicMock()
+    fake_model.invoke.side_effect = _api_timeout_error()
+    with pytest.raises(ModelTimeoutError):
+        llm.invoke_model(fake_model, [MagicMock()])
+
+
 def test_invoke_model_other_error_reraises():
     fake_model = MagicMock()
     fake_model.invoke.side_effect = RuntimeError("boom")
