@@ -52,7 +52,9 @@ CONTRACT_PLAN_SCHEMA = {
 
 FINANCE_INFO_SCHEMA = _object({
     "contract_amount": _nullable_string(),
-    "currency": _nullable_string(max_length=8),
+    # `currency` 口径为 ISO 4217 三位大写代码（2026-10-05 定），故把上限由 8 收紧为 3。
+    # 属 schema 约束收紧：不新增字段、不改名、不改字段集合。
+    "currency": _nullable_string(max_length=3),
 })
 
 

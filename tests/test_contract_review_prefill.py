@@ -175,13 +175,13 @@ def test_verbatim_fields_keep_the_original_wording():
     """金额 / 日期保留原文写法：货币符号、千分位、比例、非 ISO 日期一律照抄，不换算。"""
     dumped = PrefillPayload.model_validate({
         "contract_info": {"service_start_date": "2025年3月1日", "service_valid_months": "13.5个月"},
-        "contract_plan": [{"milestone_seq": 1, "payment_amount": "¥10,492,500.00"}],
+        "contract_plan": [{"milestone_seq": 1, "payment_amount": "10492500.00"}],
         "finance_info": {"contract_amount": "¥4690000元"},
         "guarantee": [{"amount": "5%"}],
     }).model_dump()
     assert dumped["contract_info"]["service_start_date"] == "2025年3月1日"
     assert dumped["contract_info"]["service_valid_months"] == "13.5个月"
-    assert dumped["contract_plan"][0]["payment_amount"] == "¥10,492,500.00"
+    assert dumped["contract_plan"][0]["payment_amount"] == "10492500.00"
     assert dumped["finance_info"]["contract_amount"] == "¥4690000元"
     assert dumped["guarantee"][0]["amount"] == "5%"
 
@@ -268,6 +268,156 @@ def test_prefill_prompt_renders_literal_braces_once():
     assert "{{" not in text
 
 
+def test_prefill_prompt_carries_amount_symbol_strip_rules():
+    """金额型字段的**删集与留集**必须落在 prompt 里（2026-10-03 第十五轮口径）。
+
+    最关键的是**留集**：`%` 与「万 / 亿」必须在场。若 prompt 被写成"去除非数字字符"，
+    `"50%"` 会退化成 `"50"`、「46.9万」会被折算 —— 都属语义灾难。删掉这些短语即回归。
+    """
+    from app.capabilities.contract_review.prefill_prompts import build_prefill_messages
+
+    text = "".join(m.content for m in build_prefill_messages("all", "正文"))
+    for phrase in (
+        "去掉货币符号",
+        "千分位",
+        "payment_amount",
+        "contract_amount",
+        '不能变成"50"',
+        '不能变成"469000"',
+    ):
+        assert phrase in text, phrase
+    # 旧口径的反向断言：prompt 里不得再出现"不去掉符号"
+    assert "不要去掉符号" not in text
+
+
+def test_prefill_prompt_carries_fill_in_blank_marker_rule():
+    """`【】` 填空标记的边界规则必须落在 prompt 里。
+
+    背景：同一份合同里，模型对同一个 `【】` 形态给出 4 种互不相同的取值方式，
+    「…之日起【两】年」被抽成 `"两"`（丢单位）。根因是**规则缺失**，不是模型能力问题。
+    """
+    from app.capabilities.contract_review.prefill_prompts import build_prefill_messages
+
+    text = "".join(m.content for m in build_prefill_messages("d02", "正文"))
+    assert "【】" in text
+    assert "【两】年" in text
+    assert "两年" in text
+    assert "裸数字" in text or "裸量词" in text
+
+
+def test_prefill_prompt_carries_service_date_source_rule():
+    """服务日期的来源必须限定在服务 / 售后 / 质保条款，且只认绝对日期。
+
+    背景：`service_end_date` 曾被填成履行期限条款里的开发完成日 —— 在**非服务类**合同下
+    这是误抓（判据：起止不成对）。
+    """
+    from app.capabilities.contract_review.prefill_prompts import build_prefill_messages
+
+    text = "".join(m.content for m in build_prefill_messages("d02", "正文"))
+    for phrase in ("service_start_date", "service_end_date", "质保", "绝对日期", "事件起算"):
+        assert phrase in text, phrase
+
+
+def test_prefill_prompt_carries_contract_type_rule():
+    """合同类型必须由**合同名称**判定，且**读不到名称时按非服务类**兜底。
+
+    用户口径（2026-10-05）：判据从宽 —— 能识别就按服务类；识别不出按非服务类走。
+    服务类合同允许 `service_end_date` 取合同自身的完成 / 交付截止日。
+
+    用户口径（2026-10-07，两轮收窄）：按**软件公司的服务类合同**缩小范围 ——
+    服务性质词只剩 服务 / 运维 / 运营 / 维护 / 技术支持 这 5 个；
+    开发 / 咨询 / 设计 / 集成 / 实施 / 监理 / 勘察 / 检测 / 评估 / 外包 / 培训 为**反例**。
+    ⚠️ 但反例词**没有否决权**：名称含「服务」二字仍判服务类（如「集成服务合同」）。
+
+    ⚠️ 历史坑（2026-10-05）：词表**曾误收「开发」** → 「技术开发合同」被误判为服务类，
+    连带把它的「开发完成日」合法化成 `service_end_date`（= 把一条真缺陷洗成合法）。
+    下面的正向/反向断言把这个坑钉住，防止有人再把反例词加回正向词表。
+    """
+    from app.capabilities.contract_review.prefill_prompts import build_prefill_messages
+
+    text = "".join(m.content for m in build_prefill_messages("d02", "正文"))
+    for phrase in ("合同名称", "服务类", "非服务类", "读不到合同名称", "完成 / 交付截止日"):
+        assert phrase in text, phrase
+
+    flat = text.replace(" ", "").replace("\n", "").replace("*", "")
+
+    # 正向：5 个服务性质词必须作为词表出现（两轮收窄后的定稿清单）
+    assert "服务/运维/运营/维护/技术支持" in flat
+
+    # 反向断言 ①：11 个反例词必须被**显式点名**（而不是简单删掉），且写成否定式
+    assert "都不算" in flat
+    for word in ("开发", "咨询", "设计", "集成", "实施", "监理", "勘察", "检测", "评估", "外包", "培训"):
+        assert word in flat, word
+    # 反向断言 ②：「技术开发合同」按非服务类必须写明
+    assert "技术开发合同" in flat
+    # 反向断言 ③：反例词没有否决权 —— 含「服务」的复合名仍判服务类，必须写明
+    assert "集成服务合同" in flat
+    # 反向断言 ④：旧词表形态不得复活（反例词曾被并列在正向词表里）
+    assert "运维/运营/咨询" not in flat
+    assert "服务/运维/运营/咨询" not in flat
+    assert "外包/维护/技术支持/实施" not in flat
+    assert "实施/集成/培训" not in flat
+    assert "技术支持/外包/培训" not in flat
+
+
+def test_prefill_request_has_no_contract_type_field():
+    """请求参数里**没有**合同类型字段 —— 类型只能由服务端从合同名称推断。
+
+    这条钉住设计前提：若将来有人往请求里加 `contract_type`，本测试会红，
+    提醒他同步改 prompt（否则该参数会被静默忽略、与响应值不一致）。
+    """
+    from app.capabilities.contract_review.schemas import ContractReviewRequest as _Req
+
+    fields = set(_Req.model_fields)
+    assert "contract_type" not in fields
+    assert fields == {"contract_md", "attachments", "mode", "prefill_scope"}
+
+
+def test_prefill_prompt_carries_currency_iso_rule():
+    """`currency` 归一为 ISO 4217，且必须写明**不固定为某一取值**。
+
+    踩坑记录：曾据文档措辞误判该字段恒为 `"CNY"`（实为按合同币种变化）——
+    这条断言把"不固定"钉在 prompt 上。
+    """
+    from app.capabilities.contract_review.prefill_prompts import build_prefill_messages
+
+    text = "".join(m.content for m in build_prefill_messages("d03", "正文"))
+    for phrase in ("ISO 4217", "CNY", "USD", "JPY", "不要固定写死"):
+        assert phrase in text, phrase
+
+
+def test_prefill_prompt_carries_evidence_third_state():
+    """`evidence` 的**第三种态**必须写在 prompt 里：该处章节存在、但不含所需事实。"""
+    from app.capabilities.contract_review.prefill_prompts import build_prefill_messages
+
+    text = "".join(m.content for m in build_prefill_messages("d02", "正文"))
+    assert "确实不存在" in text
+    assert "没有该字段需要的内容" in text
+    assert "不能拿该处章节里不相关的原文片段充当 quote" in text
+
+
+def test_prefill_amount_rule_reaches_every_scope():
+    """金额规则写在共用的 system 段里，故三个 scope 都看得到。
+
+    防的是将来把规则挪进 `_FIELDS` 后漏组 —— 那样 `d03`（只含 finance_info + guarantee）
+    就会拿不到规则，而 `d02` 仍然正常，属**静默的半失效**。
+    """
+    from app.capabilities.contract_review.prefill_prompts import build_prefill_messages
+
+    for scope in ("all", "d02", "d03"):
+        text = "".join(m.content for m in build_prefill_messages(scope, "正文"))
+        assert "去掉货币符号" in text, scope
+        assert "ISO 4217" in text, scope
+
+
+def test_currency_schema_max_length_is_three():
+    """`currency` 口径为 ISO 4217 三位码，schema 上限由 8 收紧为 3（2026-10-05）。"""
+    schema = get_prefill_response_format("d03")["json_schema"]["schema"]
+    currency = schema["properties"]["finance_info"]["properties"]["currency"]
+    assert currency["maxLength"] == 3
+    assert currency["type"] == ["string", "null"]
+
+
 from app.capabilities.contract_review.schemas import ContractReviewRequest
 
 
@@ -292,14 +442,19 @@ def _request(scope="all", md="正文"):
 
 
 def _ok_payload():
-    """模拟新取值口径下模型的输出：除 milestone_seq 外一律原文原样字符串。"""
+    """模拟当前取值口径下模型的输出：除 `milestone_seq` 外一律字符串。
+
+    默认口径为原文原样；**三个金额型字段例外 —— 已剥离货币符号与千分位**
+    （2026-10-03 第十五轮），故 `contract_amount` 用 `"10492500.00"` 而非 `"¥10,492,500.00"`。
+    服务端对取值**零加工**，下面的断言校验的正是**原样透传**。
+    """
     return {
         "contract_info": {"payment_terms": "分期", "payment_method": "电汇"},
         "contract_plan": [
             {"milestone_name": "终验", "milestone_seq": 3, "payment_amount": "10%"},
             {"milestone_name": "启动", "milestone_seq": 1, "payment_amount": "50%"},
         ],
-        "finance_info": {"contract_amount": "¥10,492,500.00", "currency": "CNY"},
+        "finance_info": {"contract_amount": "10492500.00", "currency": "CNY"},
         "guarantee": [{"type": "履约保证金", "amount": "5%"}],
     }
 
@@ -309,7 +464,7 @@ def test_run_prefill_all_returns_four_groups_ok():
         data = run_prefill(_request("all"))
     dumped = data.model_dump()
     assert dumped["prefill_status"] == "ok"
-    assert dumped["prefill"]["finance_info"]["contract_amount"] == "¥10,492,500.00"
+    assert dumped["prefill"]["finance_info"]["contract_amount"] == "10492500.00"
     assert dumped["prefill"]["contract_plan"][0]["payment_amount"] == "50%"
     assert dumped["prefill"]["guarantee"][0]["amount"] == "5%"
     assert len(dumped["prefill"]["guarantee"]) == 1
@@ -327,7 +482,7 @@ def test_run_prefill_d02_keeps_contract_amount_but_blanks_guarantee():
     """d02 必须带回合同总额（用于把 payment_amount 的比例折算成金额），但保证金属 d03。"""
     with patch("app.capabilities.contract_review.prefill_service._invoke_json_prompt", return_value=_ok_payload()):
         dumped = run_prefill(_request("d02")).model_dump()
-    assert dumped["prefill"]["finance_info"]["contract_amount"] == "¥10,492,500.00"
+    assert dumped["prefill"]["finance_info"]["contract_amount"] == "10492500.00"
     assert dumped["prefill"]["finance_info"]["currency"] == "CNY"
     assert dumped["prefill"]["guarantee"] == []
     assert dumped["prefill"]["contract_plan"][0]["payment_amount"] == "50%"

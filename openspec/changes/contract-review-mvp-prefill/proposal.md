@@ -17,6 +17,7 @@
 - 预填在 prompt 边界内对输入做**换行归一化**：合同系统实际传入的正文可能是"一整行 + 字面量 `\n`、无真换行"的形态，不归一化会丢掉 Markdown 结构（尤其是付款计划表）。
 - 预填失败 / 超时不改变 HTTP 成功语义，统一以 `prefill_status: "failed"` 与字段全 `null` / 数组全空（结构仍在，不省略键）兜底，**不抛 5xx**。
 - 未取到的字段一律 `null`（数组类为空数组），不用空字符串占位；允许基于已抽到事实的推算，不允许无依据臆造。
+- **取值规则补强（2026-10-03 第十五轮）**：三个金额型字段（`contract_plan[].payment_amount`、`finance_info.contract_amount`、`guarantee[].amount`）返回**不带货币符号与千分位**，但保留 `%`、小数点及其后原样小数位、数量级「万 / 亿」，且**不做任何换算**（不折「万」、不折 `%`、不转中文大写数字）；**除这 3 个字段外任何字段一律不剥离符号**。合同以 `【】` 等填空标记书写的，取值须去掉标记本身并保留紧邻的单位 / 符号 / 量纲（不得返回裸数字、裸量词）。`service_start_date` / `service_end_date` 的取值来源限定服务 / 售后 / 质保条款 —— 合同只有「事件起算 + 期限」时两字段同为 `null`，不得用合同内其他绝对日期顶替。`currency` 明确为 ISO 4217 三位大写码（`CNY` / `USD` / `JPY`），**不恒为 `CNY`**。上述规则**全部在 prompt 层实现，服务端不做任何字符串后处理**。
 - 不修改 `mode=review` 的现有链路、现有响应字段与现有测试期望；不触碰 `two_stage/**`、现有评审 prompt 与 `ContractReviewData` 模型。
 
 ## Capabilities
@@ -37,7 +38,7 @@
 - **Prompt**：新增预填专用 prompt 资源；现有评审 prompt 不改。
 - **配置**：无新增配置项，不新增依赖。
 - **测试**：新增预填契约测试（两种 mode 的响应形状、`prefill_status` 各分支、`null` 与空数组表达、`evidence` 元素必带 `section` / `quote`）与换行归一化用例；**最强回归判据**是 `mode` 不传 / `=review` 时 `data` 段与今天逐字段一致。
-- **调用方**：D-02（合同管理员预填）与 D-03（销售预填）是**两个触发时机不同的场景，但共用同一个 `mode=prefill` 调用**——接口无状态、返回值不依赖调用时机，响应四组字段已按场景分组（D-02 取 `contract_info` + `contract_plan` + `finance_info`，D-03 取 `finance_info` + `guarantee`；**`finance_info` 为两场景共用** —— D-02 需要其中的 `contract_amount` 才能把 `payment_amount` 的比例原文折算成金额），合同系统各取各的组回填表单；`section` / `quote` 用于"AI 依据"的原文定位展示。不拆接口的理由与已知代价见 `docs/superpowers/specs/2026-09-15-contract-review-prefill-design.md` §3.4。
+- **调用方**：D-02（合同管理员预填）与 D-03（销售预填）是**两个触发时机不同的场景，但共用同一个 `mode=prefill` 调用**——接口无状态、返回值不依赖调用时机，响应四组字段已按场景分组（D-02 取 `contract_info` + `contract_plan` + `finance_info`，D-03 取 `finance_info` + `guarantee`；**`finance_info` 为两场景共用** —— D-02 需要其中的 `contract_amount` 才能把 `payment_amount` 的比例原文折算成金额），合同系统各取各的组回填表单；`section` / `quote` 用于"AI 依据"的原文定位展示。不拆接口的理由与已知代价见 `docs/superpowers/specs/2026-09-15-contract-review-prefill-design.md` §3.4。**第十五轮起金额型字段不再带货币符号**，调用方仍需**按字符串接收并自行解析**（值可能含 `%`、`万 / 亿`、小数位，也可能为 `null` 或中文大写）；本次调整**不改字段名 / 类型 / 响应结构 / 请求参数 / 错误码**，调用方**无需改动**，增量说明见 `docs/integration/2026-10-03-contract-review-prefill-value-rules-change.md`。
 - **不做**：不新增独立接口；不实现 `review` / `prefill` 之外的任何 mode 取值；**不动 `two_stage/**`（零改动，红线）**；不解析附件；不引入证据索引 / 覆盖度（含字段级抽取状态）/ 事实域等两阶段概念；不给 `ContractReviewData` 增加任何字段；**不改动 `translate` 能力的任何行为**；**`mode=review` 的既有链路除依赖 change 的"关思考"外不做任何改动**。
 
 > 详细字段清单、抽取与计算口径、四轮修订记录见 `docs/superpowers/specs/2026-09-15-contract-review-prefill-design.md`（本 change 按 AGENTS.md「design.md 可选」约定不另写 design.md）。
