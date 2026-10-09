@@ -13,14 +13,14 @@ _OPINION_A = {
     "node_name": "销售评审",
     "approver_name": "张某",
     "role": "销售",
-    "action": "pass",
+    "action": "通过",
     "comment": "认可推进。",
 }
 _OPINION_B = {
     "node_name": "法务评审",
     "approver_name": "陈某",
     "role": "法务",
-    "action": "conditional",
+    "action": "有条件通过",
     "comment": "需补充仲裁地。",
 }
 

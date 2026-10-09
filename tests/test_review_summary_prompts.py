@@ -30,11 +30,15 @@ def test_template_defines_both_generation_tasks():
 def test_build_prompt_returns_system_and_human_messages():
     messages = p.build_prompt("summary", contract_meta_block="（无）", route_reason_block="（无）",
                               risk_register_block="（无）", opinions_block="（无）",
-                              distribution_note="无评审意见", valid_refs_block="（无）")
+                              distribution_note="无评审意见", coverage_note="（无）",
+                              valid_refs_block="（无）", retry_note="")
     assert isinstance(messages[0], SystemMessage)
     assert isinstance(messages[1], HumanMessage)
     assert len(messages) == 2
     assert "（无）" in messages[1].content
+    # 首发的定向修正块是空的：不得留下空标题之类的噪音
+    assert "【定向修正要求" in messages[1].content
+    assert "【有字意见清单" in messages[1].content  # D16：覆盖范围由服务端列出
 
 
 def test_build_prompt_substitutes_all_placeholders():
@@ -49,7 +53,8 @@ def test_build_prompt_substitutes_all_placeholders():
 def test_summary_system_prompt_embeds_the_five_rules():
     system = p.build_prompt(
         "summary", contract_meta_block="x", route_reason_block="x", risk_register_block="x",
-        opinions_block="x", distribution_note="x", valid_refs_block="x",
+        opinions_block="x", distribution_note="x", coverage_note="x", valid_refs_block="x",
+        retry_note="x",
     )[0].content
     assert "数字零生成" in system
     assert "事实单点归属" in system
@@ -58,6 +63,20 @@ def test_summary_system_prompt_embeds_the_five_rules():
     assert "中性" in system  # reject 时总述退化为中性陈述
     assert "建议通过" in system  # 不出具决策建议
     assert "客户" in system and "评价" in system  # CRM 暂缓期不写客户评价
+    # D16 契约：模型只交主题句 + 指针，合同要素与结论分布由服务端装配
+    assert "opinion_refs" in system
+    assert "服务端装配" in system
+    assert "未背书" in system  # G3 两档判定的口径要向模型说明白
+
+
+def test_summary_retry_note_reaches_the_user_prompt():
+    """定向重试话术只进 user 消息：每条违规都是服务端复检出的可核验事实。"""
+    user = p.build_prompt(
+        "summary", contract_meta_block="x", route_reason_block="x", risk_register_block="x",
+        opinions_block="x", distribution_note="x", coverage_note="x", valid_refs_block="x",
+        retry_note="主题 2 点名了未背书的节点：财经复核",
+    )[1].content
+    assert "主题 2 点名了未背书的节点：财经复核" in user
 
 
 def test_opinion_system_prompt_requires_verbatim_numbers_and_conditions():
@@ -87,10 +106,18 @@ def test_response_format_is_strict_json_schema(task):
 
 
 def test_summary_response_format_shape():
-    props = p.get_response_format("summary")["json_schema"]["schema"]["properties"]
-    assert set(props.keys()) == {"text", "source_refs"}
-    assert props["text"]["type"] == ["string", "null"]
-    assert props["source_refs"]["type"] == "array"
+    """D16 形状：`{overall, themes[{text, opinion_refs}]}`，旧 `{text, source_refs}` 已退役。"""
+    schema = p.get_response_format("summary")["json_schema"]["schema"]
+    props = schema["properties"]
+    assert set(props.keys()) == {"overall", "themes"}
+    assert props["overall"]["type"] == ["string", "null"]
+    theme = props["themes"]["items"]
+    assert theme["type"] == "object"
+    assert set(theme["properties"].keys()) == {"text", "opinion_refs"}
+    assert theme["properties"]["text"]["type"] == "string"  # 主题句不得为空字符串占位
+    assert theme["properties"]["opinion_refs"]["type"] == "array"
+    assert theme["additionalProperties"] is False
+    assert set(theme["required"]) == {"text", "opinion_refs"}
 
 
 def test_opinion_response_format_shape():

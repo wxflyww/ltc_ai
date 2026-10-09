@@ -65,12 +65,20 @@ _RESPONSE_FORMATS: dict[str, dict[str, Any]] = {
     "summary": {
         "type": "json_schema",
         "json_schema": {
-            "name": "review_summary_text",
+            "name": "review_summary_themes",
             "strict": True,
             "schema": _object(
                 {
-                    "text": {"type": ["string", "null"]},
-                    "source_refs": _string_array(),
+                    "overall": {"type": ["string", "null"]},
+                    "themes": {
+                        "type": "array",
+                        "items": _object(
+                            {
+                                "text": {"type": "string"},
+                                "opinion_refs": _string_array(),
+                            }
+                        ),
+                    },
                 }
             ),
         },

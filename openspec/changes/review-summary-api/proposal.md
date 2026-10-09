@@ -11,9 +11,9 @@
 ## What Changes
 
 - 新增 JSON-only 接口 `POST /api/v1/review-summary`，命名统一 **review-summary**（弃用 0.1 的 approval-summary）。
-- 输入契约四组：`contract_meta`（整组可选、字段全 optional、可扩展，CRM 客户字段暂缓）、`route_reason`（可选，合同系统已生成人话原文照搬）、`risk_register[]`（合同系统预选，只含高风险项，12 字段全可选照搬）、`opinions[]`（必填数组可为 `[]`，`action` 枚举 `pass/conditional/reject`）。
+- 输入契约四组：`contract_meta`（整组可选、字段全 optional、可扩展，CRM 客户字段暂缓）、`route_reason`（可选，合同系统已生成人话原文照搬，`text` 非空）、`risk_register[]`（合同系统预选，只含高风险项，12 字段全可选照搬）、`opinions[]`（必填数组可为 `[]`，`action` 为非空字符串——不枚举不翻译，原值照搬回显，见 design.md D8）。
 - 响应为整包面板 JSON（第一原则）：`review_summary`（AI 总述）+ `key_concerns[]`（提级块固定置首 + 风险项按传入顺序）+ `opinion_details[]`（骨架照搬 + AI 摘要）+ `degraded_sections[]`。
-- AI 生成仅两处（总述、单节点意见摘要），其余全部原文装配；防幻觉五条铁律：数字零生成、事实单点归属、source_refs 服务端校验（无引用或悬空引用的结论直接丢弃）、总述形容词可溯源（CRM 暂缓期不写客户评价）、存在 `reject` 时总述中性化。服务端兜底三项（铁律 1 的阿拉伯数字 token 抽验、铁律 3 溯源校验、铁律 5 正面定性词表），铁律 2/4 由 Prompt 约束（分工与已知宽松见 design.md D6）。
+- AI 生成仅两处（总述的主题归并部分、单节点意见摘要），其余全部原文装配；防幻觉五条铁律：数字零生成、事实单点归属、source_refs 服务端校验（主题级 `opinion_refs` 逐条剔除清单外引用、意见摘要无引用或悬空即丢该条）、总述形容词可溯源（CRM 暂缓期不写客户评价）、存在「不通过」意见时总述中性化。服务端兜底三项（铁律 1 的阿拉伯数字 token 抽验、铁律 3 溯源校验、铁律 5 正面定性词表），铁律 2/4 由 Prompt 约束（分工与已知宽松见 design.md D6）。**总述不得空白**：AI 稿整块不可用时由服务端中性兜底稿顶上并标 `review_summary.fallback`（见 design.md D10）。**总述契约为服务端拼接（D16/D16.1/D16.2，取代 D12 的三段式写作与 D15 的文本归属闸）**：模型只交 `{"overall": 一句态势, "themes": [{"text": 主题句, "opinion_refs": ["opinions[i]"]}]}`，`review_summary.text` = ①合同要素句。②结论分布句。overall。主题1（节点名…）；主题2（节点名…）……——①② 与节点名一律由服务端按请求体确定性装配/反查，归属因此结构性不可能错；新增响应字段 `review_summary.themes[]`。校验落在结构层：G1 引用逐条剔除（剩 0 才违规）、G2 refs 不得指向空 `comment`、G3 句内点名须被本主题 refs 背书、G4 漏纳**只观测**不扳闸（容量 ≤4×≤3，服务端不惩罚模型遵守契约）。处置阶梯：结构违规 → 定向重试一次（话术全为可核验事实）→ 两稿取合法主题数优者 → 仍违规的主题整条丢弃并标 `review_summary.incomplete`（内容仍是 AI 稿、覆盖缺一角、不落缓存）；0 合法主题 → 兜底稿；无有字意见 → 只有 ①② 两句、零模型调用、可缓存。红线 300 字作用于**拼接后全文**，超长按整句裁尾而不整段弃用（D13/D16.1-I5）。`opinion_details.model` 仅在模型**漏交该 index** 时出现；`comment` 为空或近空（"同意。"）而模型按 prompt 契约显式返回 `summary=null` 不计丢弃、不旁路缓存（D14）。
 - 空态矩阵 6 场景与 `degraded_sections` 标记归接口侧单一实现；模型调用失败复用统一错误码 20001/20002/20003，不新增错误码。
 - 实时生成 + 规范化输入内容 hash 缓存，输入任何变更自动失效，合同系统无需通知。
 - 模型调用与现行能力共用 `get_chat_model()` 单例（只消费 `bind()` 返回的新对象），关闭思考走 `extra_body={"chat_template_kwargs": {"enable_thinking": False}}`；SDK 层 `max_retries=0`，业务层仅解析失败重试 1 次。

@@ -15,9 +15,15 @@ from app.capabilities.review_summary.schemas import ReviewSummaryRequest
 from tests.test_review_summary_service import _Stub
 
 _SUMMARY = {
-    "text": "该合同为硬件集成合同，合同总额 ¥126 万元。",
-    "source_refs": ["contract_meta.contract_type", "contract_meta.contract_amount"],
+    "overall": None,
+    "themes": [
+        {
+            "text": "合同总额 ¥126 万元须复核，且须补充仲裁地后方可通过。",
+            "opinion_refs": ["opinions[0]"],
+        }
+    ],
 }
+_THEME_TEXT = "合同总额 ¥126 万元须复核，且须补充仲裁地后方可通过。"
 _OPINIONS = {
     "summaries": [{"index": 0, "summary": "须补充仲裁地。", "source_refs": ["opinions[0]"]}]
 }
@@ -30,6 +36,11 @@ def _stub_model(*responses):
         svc, "invoke_model", stub.invoke
     ):
         yield stub
+
+
+def _two_rounds():
+    """两发请求（首发 + 变更重发）各自的响应序列，避免第二发拿错形状多触一次重试。"""
+    return (_SUMMARY, _OPINIONS, _SUMMARY, _OPINIONS)
 
 
 @pytest.fixture(autouse=True)
@@ -58,7 +69,7 @@ def _request(**overrides) -> ReviewSummaryRequest:
                 "node_name": "法务评审",
                 "approver_name": "陈某",
                 "role": "法务",
-                "action": "conditional",
+                "action": "有条件通过",
                 "comment": "建议补充仲裁地后方可通过。",
             }
         ],
@@ -68,7 +79,7 @@ def _request(**overrides) -> ReviewSummaryRequest:
 
 
 def test_second_identical_request_hits_cache_without_model_call():
-    with _stub_model(_SUMMARY, _OPINIONS) as stub:
+    with _stub_model(*_two_rounds()) as stub:
         first = svc.generate_review_summary(_request())
         assert len(stub.calls) == 2
         second = svc.generate_review_summary(_request())
@@ -92,7 +103,7 @@ def test_cached_payload_is_panel_data_only():
 
 
 def test_comment_change_invalidates_cache():
-    with _stub_model(_SUMMARY, _OPINIONS) as stub:
+    with _stub_model(*_two_rounds()) as stub:
         svc.generate_review_summary(_request())
         changed = _request(
             opinions=[
@@ -100,7 +111,7 @@ def test_comment_change_invalidates_cache():
                     "node_name": "法务评审",
                     "approver_name": "陈某",
                     "role": "法务",
-                    "action": "conditional",
+                    "action": "有条件通过",
                     "comment": "建议补充仲裁地后方可通过；另需确认违约金条款。",
                 }
             ]
@@ -110,7 +121,7 @@ def test_comment_change_invalidates_cache():
 
 
 def test_risk_register_change_invalidates_cache():
-    with _stub_model(_SUMMARY, _OPINIONS) as stub:
+    with _stub_model(*_two_rounds()) as stub:
         svc.generate_review_summary(_request())
         svc.generate_review_summary(_request(risk_register=[]))
     assert len(stub.calls) == 4  # 风险项变更 → 缓存键不同，总述与摘要均重新生成
@@ -121,10 +132,10 @@ def test_added_opinion_invalidates_cache():
         "node_name": "财经评审",
         "approver_name": "孙某",
         "role": "财务",
-        "action": "pass",
+        "action": "通过",
         "comment": "预算定价合理。",
     }
-    with _stub_model(_SUMMARY, _OPINIONS) as stub:
+    with _stub_model(*_two_rounds()) as stub:
         svc.generate_review_summary(_request())
         svc.generate_review_summary(
             _request(
@@ -133,7 +144,7 @@ def test_added_opinion_invalidates_cache():
                         "node_name": "法务评审",
                         "approver_name": "陈某",
                         "role": "法务",
-                        "action": "conditional",
+                        "action": "有条件通过",
                         "comment": "建议补充仲裁地后方可通过。",
                     },
                     extra,
@@ -144,14 +155,14 @@ def test_added_opinion_invalidates_cache():
 
 
 def test_route_reason_change_invalidates_cache():
-    with _stub_model(_SUMMARY, _OPINIONS) as stub:
+    with _stub_model(*_two_rounds()) as stub:
         svc.generate_review_summary(_request())
         svc.generate_review_summary(_request(route_reason=None))
     assert len(stub.calls) == 4
 
 
 def test_contract_meta_change_invalidates_cache():
-    with _stub_model(_SUMMARY, _OPINIONS) as stub:
+    with _stub_model(*_two_rounds()) as stub:
         svc.generate_review_summary(_request())
         svc.generate_review_summary(_request(contract_meta={"contract_type": "软件服务"}))
     assert len(stub.calls) == 4
@@ -165,18 +176,37 @@ def test_model_failure_is_not_cached():
 
 
 def test_ai_degraded_result_is_not_cached():
-    """总述因 source_refs 悬空被丢弃属生成质量问题，不应被钉死到缓存里。"""
-    dangling = {"text": "该合同为硬件集成合同。", "source_refs": ["opinions[9]"]}
+    """总述改用服务端兜底稿属生成质量问题（2026-10-08 A+B：总述不再置空），
+    兜底稿同样不应被钉死到缓存里——下次请求仍要给模型机会。"""
+    dangling = {"overall": None, "themes": [{"text": "该合同为硬件集成合同。", "opinion_refs": ["opinions[9]"]}]}
     with _stub_model(dangling, _OPINIONS) as stub:
         first = svc.generate_review_summary(_request())
-    assert first.review_summary.text is None
-    assert "review_summary.model" in first.degraded_sections
+    assert first.review_summary.text is not None
+    assert "review_summary.fallback" in first.degraded_sections
     assert get_cached(make_cache_key(_request())) is None
+    assert len(stub.calls) == 3  # 结构失守重试过一次仍无合法主题，才落到兜底稿
     with _stub_model(_SUMMARY, _OPINIONS) as retry:
         second = svc.generate_review_summary(_request())
     assert len(retry.calls) == 2  # 重新生成而非命中坏结果
-    assert second.review_summary.text == _SUMMARY["text"]
+    assert svc._open_theme(_THEME_TEXT) in second.review_summary.text
     assert second.degraded_sections == []
+
+
+def test_partially_discarded_themes_are_not_cached():
+    """.incomplete = 真丢弃过主题（AI 稿缺角）：同样不钉死缓存，下次仍给模型补全的机会。"""
+    mixed = {
+        "overall": None,
+        "themes": [
+            {"text": "须补充仲裁地后方可通过。", "opinion_refs": ["opinions[0]"]},
+            {"text": "预算定价合理。", "opinion_refs": ["opinions[9]"]},  # 越界指针 → 剔光 → 丢弃
+        ],
+    }
+    with _stub_model(mixed, mixed, _OPINIONS) as stub:
+        first = svc.generate_review_summary(_request())
+    assert "review_summary.incomplete" in first.degraded_sections
+    assert [t.text for t in first.review_summary.themes] == ["须补充仲裁地后方可通过。"]
+    assert get_cached(make_cache_key(_request())) is None
+    assert len(stub.calls) == 3
 
 
 def test_deterministic_empty_state_is_cached():
@@ -185,7 +215,7 @@ def test_deterministic_empty_state_is_cached():
     with _stub_model(_SUMMARY) as stub:
         first = svc.generate_review_summary(req)
         second = svc.generate_review_summary(req)
-    assert len(stub.calls) == 1
+    assert len(stub.calls) == 0  # 无有字意见 → 连总述都不请模型
     assert first == second
     assert "opinion_details" in first.degraded_sections
 

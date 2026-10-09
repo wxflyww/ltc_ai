@@ -9,8 +9,6 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
-Action = Literal["pass", "conditional", "reject"]
-
 
 class ContractMeta(BaseModel):
     """合同要素（整组可选；字段全 optional，缺位由总述跳过不补）。"""
@@ -44,12 +42,16 @@ class RiskRegisterItem(BaseModel):
 
 
 class Opinion(BaseModel):
-    """单条评审意见（一人多角色拆多条记录）。"""
+    """单条评审意见（一人多角色拆多条记录）。
+
+    `action` 「传过来是啥就是啥」：不做枚举/翻译/映射，任意非空原值照单全收、
+    响应原样回显（5.4 后契约，change design.md D7）。
+    """
 
     node_name: str
     approver_name: str
     role: str
-    action: Action
+    action: str = Field(min_length=1)
     comment: str
     submitted_at: str | None = None
 
@@ -63,11 +65,26 @@ class ReviewSummaryRequest(BaseModel):
     opinions: list[Opinion]
 
 
+class SummaryTheme(BaseModel):
+    """总述的一条主题（change design.md D16）：模型写的主题句 + 指向有字意见的指针。
+
+    `text` 是模型自己的成稿（不含服务端渲染的节点名后缀）；`opinion_refs` 是服务端
+    剔除/归一后真正采信的那几条 `opinions[i]` 整下标路径——归属由它派生，不靠文本猜。
+    """
+
+    text: str
+    opinion_refs: list[str] = Field(default_factory=list)
+
+
 class ReviewSummarySection(BaseModel):
-    """一、评审总结：一句话总述（AI）+ 溯源引用。"""
+    """一、评审总结：服务端拼接的总述（AI）+ 溯源引用 + 主题结构。
+
+    `themes` 在兜底稿与"无有字意见"场景给 `[]` 而不是省键（缺值给空不省键）。
+    """
 
     text: str | None = None
     source_refs: list[str] = Field(default_factory=list)
+    themes: list[SummaryTheme] = Field(default_factory=list)
 
 
 class EscalationConcern(BaseModel):
@@ -105,12 +122,12 @@ KeyConcern = Annotated[EscalationConcern | RiskConcern, Field(discriminator="typ
 
 
 class OpinionDetail(BaseModel):
-    """三、各节点意见详情：骨架字段照搬 + AI 摘要。"""
+    """三、各节点意见详情：骨架字段照搬 + AI 摘要。`action` 为输入原值回显。"""
 
     node_name: str
     approver_name: str
     role: str
-    action: Action
+    action: str
     summary: str | None = None
     source_ref: str | None = None
 

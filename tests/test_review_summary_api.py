@@ -37,14 +37,14 @@ _VALID_BODY = {
             "node_name": "销售评审",
             "approver_name": "张某",
             "role": "销售",
-            "action": "pass",
+            "action": "通过",
             "comment": "认可推进。",
         },
         {
             "node_name": "法务评审",
             "approver_name": "陈某",
             "role": "法务",
-            "action": "conditional",
+            "action": "有条件通过",
             "comment": "付款争议解决条款约定不明确，建议补充仲裁地后方可通过。",
         },
     ],
@@ -76,7 +76,7 @@ def _fake_panel() -> ReviewSummaryData:
                 node_name="销售评审",
                 approver_name="张某",
                 role="销售",
-                action="pass",
+                action="通过",
                 summary="认可推进。",
                 source_ref="opinions[0]",
             )
@@ -101,7 +101,7 @@ def test_success_returns_full_panel_with_envelope():
     assert data["review_summary"]["text"] == "该合同为硬件集成合同，合同总额 ¥126 万元。"
     assert data["key_concerns"][0]["type"] == "risk"
     assert data["key_concerns"][0]["measure"]["measure_desc"] == "要求客户签署补充付款承诺函，并将首付款拆分为两期"
-    assert data["opinion_details"][0]["action"] == "pass"
+    assert data["opinion_details"][0]["action"] == "通过"
     assert data["degraded_sections"] == []
     assert "traceId" in body
     assert "duration_seconds" in body
@@ -129,8 +129,9 @@ def test_missing_opinions_422_and_no_model_call():
     assert not mocked.called
 
 
-def test_invalid_action_422_and_no_model_call():
-    bad = {**_VALID_BODY, "opinions": [{**_VALID_BODY["opinions"][0], "action": "approved"}]}
+def test_empty_action_422_and_no_model_call():
+    """action 废除枚举后唯一的入口约束是非空：空串 422+10001，不触模型。"""
+    bad = {**_VALID_BODY, "opinions": [{**_VALID_BODY["opinions"][0], "action": ""}]}
     with patch(_PATCH_TARGET) as mocked:
         r = _client().post("/api/v1/review-summary", json=bad)
     assert r.status_code == 422

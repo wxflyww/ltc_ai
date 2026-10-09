@@ -18,7 +18,7 @@ _OPINION = {
     "node_name": "法务评审",
     "approver_name": "陈某",
     "role": "法务",
-    "action": "conditional",
+    "action": "有条件通过",
     "comment": "付款争议解决条款约定不明确，建议补充仲裁地后方可通过。",
 }
 
@@ -36,12 +36,13 @@ def test_opinions_missing_rejected():
         ReviewSummaryRequest.model_validate({})
 
 
-def test_action_enum_only_three_values():
-    for action in ("pass", "conditional", "reject"):
+def test_action_passthrough_any_non_empty_string():
+    """「传过来是啥就是啥」：action 不做枚举/翻译，任意非空原值照单全收、原样回显；空串拒绝。"""
+    for action in ("通过", "有条件通过", "不通过", "驳回", "approved"):
         req = ReviewSummaryRequest.model_validate({"opinions": [{**_OPINION, "action": action}]})
         assert req.opinions[0].action == action
     with pytest.raises(ValidationError):
-        ReviewSummaryRequest.model_validate({"opinions": [{**_OPINION, "action": "approved"}]})
+        ReviewSummaryRequest.model_validate({"opinions": [{**_OPINION, "action": ""}]})
 
 
 def test_opinion_required_fields():
@@ -66,7 +67,7 @@ def test_unknown_extra_field_not_rejected():
         }
     )
     assert req.contract_meta.contract_type == "硬件集成"
-    assert req.opinions[0].action == "conditional"
+    assert req.opinions[0].action == "有条件通过"
 
 
 def test_contract_meta_group_optional_and_partial():
@@ -137,13 +138,29 @@ def test_output_matches_design_example():
     """设计文档 §4.2 示例 data 与输出 Schema 逐字段对齐（validate + roundtrip）。"""
     example = {
         "review_summary": {
-            "text": "该合同为硬件集成合同，合同总额 ¥126 万元，综合毛利率 27.7%；各评审节点整体认可该单价值，主要关注点集中在预付款比例。",
+            "text": (
+                "该合同为硬件集成合同，合同总额 ¥126 万元，综合毛利率 27.7%。共 4 条意见：通过 2 条、"
+                "有条件通过 2 条。关注点集中在预付款比例与付款争议条款两处。预付款比例 15% 低于公司标准，"
+                "要求争取提至 20% 或确认垫资（财经评审、风控评审）；付款争议条款须补充仲裁地后方可通过（法务评审）。"
+            ),
             "source_refs": [
                 "contract_meta.contract_type",
                 "contract_meta.contract_amount",
                 "contract_meta.gross_margin",
-                "opinions[0]",
+                "opinions",
+                "opinions[2]",
                 "opinions[3]",
+                "opinions[1]",
+            ],
+            "themes": [
+                {
+                    "text": "预付款比例 15% 低于公司标准，要求争取提至 20% 或确认垫资。",
+                    "opinion_refs": ["opinions[2]", "opinions[3]"],
+                },
+                {
+                    "text": "付款争议条款须补充仲裁地后方可通过。",
+                    "opinion_refs": ["opinions[1]"],
+                },
             ],
         },
         "key_concerns": [
@@ -191,7 +208,7 @@ def test_output_matches_design_example():
                 "node_name": "销售评审",
                 "approver_name": "张某",
                 "role": "销售",
-                "action": "pass",
+                "action": "通过",
                 "summary": "认可推进：让步 3% 换三年运维续约优先权，具战略意义。",
                 "source_ref": "opinions[0]",
             },
@@ -199,7 +216,7 @@ def test_output_matches_design_example():
                 "node_name": "法务评审",
                 "approver_name": "陈某",
                 "role": "法务",
-                "action": "conditional",
+                "action": "有条件通过",
                 "summary": "有条件通过：付款争议条款须补充仲裁地，其余无重大法律障碍。",
                 "source_ref": "opinions[1]",
             },
@@ -207,7 +224,7 @@ def test_output_matches_design_example():
                 "node_name": "财经评审",
                 "approver_name": "孙某",
                 "role": "财务",
-                "action": "conditional",
+                "action": "有条件通过",
                 "summary": "有条件通过：预付款低于公司标准、预计占用资金 96 天，要求争取提至 20% 或确认垫资；其余预算定价合理。",
                 "source_ref": "opinions[2]",
             },
@@ -215,7 +232,7 @@ def test_output_matches_design_example():
                 "node_name": "风控评审",
                 "approver_name": "周某",
                 "role": "风控",
-                "action": "pass",
+                "action": "通过",
                 "summary": "认可推进：资信良好、无诉讼、历史回款正常；预付款问题附议财务。",
                 "source_ref": "opinions[3]",
             },

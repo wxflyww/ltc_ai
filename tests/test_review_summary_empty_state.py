@@ -15,14 +15,13 @@ from app.capabilities.review_summary.schemas import ReviewSummaryRequest
 
 from tests.test_review_summary_service import _Stub  # 复用同一模型替身
 
-_FACT_ONLY_SUMMARY = {
-    "text": "该合同为硬件集成合同，合同总额 ¥126 万元。",
-    "source_refs": ["contract_meta.contract_type", "contract_meta.contract_amount"],
-}
+_THEME_TEXT = "须补充仲裁地后方可通过。"
 _NORMAL_SUMMARY = {
-    "text": "该合同为硬件集成合同；主要关注点集中在预付款比例。",
-    "source_refs": ["contract_meta.contract_type"],
+    "overall": "关注点集中在付款与争议条款两处。",
+    "themes": [{"text": _THEME_TEXT, "opinion_refs": ["opinions[0]"]}],
 }
+# 无有字意见时模型本就没题材可写：这一发交白卷（themes=[]），服务端只装配 ①②。
+_FACT_ONLY_SUMMARY = {"overall": None, "themes": []}
 
 
 @contextmanager
@@ -50,7 +49,7 @@ _ONE_OPINION = [
         "node_name": "法务评审",
         "approver_name": "陈某",
         "role": "法务",
-        "action": "conditional",
+        "action": "有条件通过",
         "comment": "建议补充仲裁地后方可通过。",
     }
 ]
@@ -119,10 +118,7 @@ def test_route_reason_present_is_not_degraded():
 def test_row3_partial_contract_meta_is_not_degraded():
     """负向断言：缺位不补不问，且 SHALL NOT 标记降级。"""
     req = _request(contract_meta={"contract_type": "硬件集成"})
-    with _stub_model(
-        {"text": "该合同为硬件集成合同。", "source_refs": ["contract_meta.contract_type"]},
-        _ONE_OPINION_SUMMARY,
-    ) as stub:
+    with _stub_model(_NORMAL_SUMMARY, _ONE_OPINION_SUMMARY) as stub:
         data = svc.generate_review_summary(req)
     assert data.degraded_sections == []
     prompt = _prompt_text(stub)
@@ -133,12 +129,12 @@ def test_row3_partial_contract_meta_is_not_degraded():
 
 def test_contract_meta_wholly_absent_is_not_degraded():
     req = _request(contract_meta=None)
-    with _stub_model(
-        {"text": "主要关注点集中在预付款比例。", "source_refs": ["risk_register[0].description"]},
-        _ONE_OPINION_SUMMARY,
-    ):
+    with _stub_model(_NORMAL_SUMMARY, _ONE_OPINION_SUMMARY):
         data = svc.generate_review_summary(req)
     assert data.degraded_sections == []
+    # ①合同要素句整段缺位，装配只从结论分布句起头
+    assert "该合同为硬件集成" not in data.review_summary.text
+    assert _THEME_TEXT.rstrip("。") in data.review_summary.text
 
 
 # --------------------------------------------------- 行 4：opinions 为空数组
@@ -151,17 +147,25 @@ def test_row4_empty_opinions_marks_both_sections():
     assert data.opinion_details == []
     assert "opinion_details" in data.degraded_sections
     assert "review_summary.opinions" in data.degraded_sections
-    # 意见摘要没有可总结对象 → 不发起第二次模型调用
-    assert len(stub.calls) == 1
+    # 没有有字意见 → 总述与摘要两处都不触模型（D16：①②本就确定性）
+    assert len(stub.calls) == 0
 
 
-def test_row4_summary_prompt_degrades_to_fact_only():
+def test_row4_without_opinions_assembles_only_the_server_sentences():
+    """行 4 的 D16 形态：①合同要素句 + ②结论分布句照常返回，themes 为空、零模型调用。"""
     req = _request(opinions=[])
     with _stub_model(_FACT_ONLY_SUMMARY) as stub:
         data = svc.generate_review_summary(req)
-    prompt = _prompt_text(stub)
-    assert "尚未提交" in prompt  # 明确告知无评审意见，禁止概括
-    assert data.review_summary.text == _FACT_ONLY_SUMMARY["text"]
+    assert stub.calls == []
+    text = data.review_summary.text
+    assert text is not None
+    assert text.startswith("该合同为硬件集成合同，合同总额 ¥126 万元。")
+    assert data.review_summary.themes == []
+    assert data.review_summary.source_refs == [
+        "contract_meta.contract_type",
+        "contract_meta.contract_amount",
+    ]
+    assert "review_summary.fallback" not in data.degraded_sections
 
 
 def test_row4_empty_opinions_is_not_a_param_error():
@@ -241,12 +245,11 @@ def test_nothing_to_summarize_skips_model_entirely():
 
 def test_meta_absent_but_opinions_present_still_generates():
     req = _request(contract_meta=None)
-    with _stub_model(
-        {"text": "评审意见存在分歧。", "source_refs": ["opinions[0]"]}, _ONE_OPINION_SUMMARY
-    ) as stub:
+    with _stub_model(_NORMAL_SUMMARY, _ONE_OPINION_SUMMARY) as stub:
         data = svc.generate_review_summary(req)
-    assert len(stub.calls) == 2
-    assert data.review_summary.text == "评审意见存在分歧。"
+    assert len(stub.calls) == 2  # 总述主题 1 次 + 意见摘要 1 次，无违规重试
+    assert _THEME_TEXT.rstrip("。") in data.review_summary.text
+    assert data.review_summary.themes[0].opinion_refs == ["opinions[0]"]
 
 
 def test_panel_always_has_four_blocks_even_in_full_empty_state():
