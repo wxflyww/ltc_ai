@@ -1,7 +1,8 @@
 """D16(+D16.1+D16.2) 主题结构化用例：themes 契约、结构闸 G1/G2/G3、观测 G4、服务端渲染与处置阶梯。
 
-规格来源 = `openspec/changes/review-summary-api/design.md` 的 D16 / D16.1 / D16.2（冲突处以
-D16.2、D16.1 为准）。覆盖任务书 §5 的最低必测集 18 条（可加不可减），逐条在 docstring 标号。
+规格来源 = 现行契约见 `openspec/specs/review-summary/spec.md`；决策出处 D16 / D16.1 / D16.2 见归档件
+`openspec/changes/archive/2026-10-10-review-summary-api/design.md`（冲突处以 D16.2、D16.1 为准）。
+覆盖任务书 §5 的最低必测集 18 条（可加不可减），逐条在 docstring 标号。
 
 模型层边界统一 mock，不发任何真实调用。
 """
