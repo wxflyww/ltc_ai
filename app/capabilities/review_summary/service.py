@@ -326,11 +326,23 @@ def _opinions_block(
 
 
 def _distribution_sentence(request: ReviewSummaryRequest) -> str | None:
-    """②结论分布句的**唯一事实口径**（change design.md D16.1-I1）。
+    """②结论分布句的**唯一事实口径**（change design.md D16.1-I1、D18）。
 
     面板 ②、prompt 注记、服务端兜底稿三处共用这一句，不许出现第三份措辞；本函数只产
     事实，给模型的指令一律留在 `_distribution_note` 里附加，绝不进面板。
     结论分布按**传入原值**计数（action 无枚举无翻译，D7）。
+    尾部的"其中 N 条填写了意见"（D18，2026-10-10 用户口令把陈述方向从"未填写"改为"填写"）
+    同样是一句**服务端算得出的确定事实**，写在这里而不是让模型去猜：prompt 原先只给有字意见
+    清单、从不提有多少条意见写了字，这个事实真空正是代答句（"其余节点无异议""其余为执行层面
+    提醒"）填进去的位置——真机 3 例代答全在补这个洞。
+    为什么报**填写条数**而不是**未填写条数**：审批人读 ② 段要的是"这份评审有多少实质内容"，
+    正向计数直接给答案；缺席条数由"共 M 条 − N 条"确定可推，事实真空照样补上，而服务端依旧
+    不替任何没写字的节点断言立场。措辞是中性事实陈述，不落在 `_POSITIVE_TONE_PHRASES` 上。
+    数字与"共 N 条"同经 `_distribution_note` 进入 `_input_number_corpus`（缺陷 C / D9 教训），
+    模型照抄属于溯源成功；反过来**未填写**条数现在②段不再逐字出现，模型若自己写出那个数字
+    会被数字闸按"语料外数字"拦下（闸只做逐字比对、不做减法）——这是口径翻转的已知副作用，
+    合法句式"其余节点未填写意见"不带数字，因此不受影响。
+    全员有字时整句不追加（反噪声，也保住既有回放逐字不变）。
     """
     if not request.opinions:
         return None
@@ -338,7 +350,11 @@ def _distribution_sentence(request: ReviewSummaryRequest) -> str | None:
     for opinion in request.opinions:
         counts[opinion.action] = counts.get(opinion.action, 0) + 1
     distribution = "、".join(f"{action} {count} 条" for action, count in counts.items())
-    return f"共 {len(request.opinions)} 条意见：{distribution}"
+    sentence = f"共 {len(request.opinions)} 条意见：{distribution}"
+    written = len(_written_opinion_indexes(request))
+    if written != len(request.opinions):
+        sentence += f"，其中 {written} 条填写了意见"
+    return sentence
 
 
 def _distribution_note(request: ReviewSummaryRequest) -> str:
@@ -995,20 +1011,33 @@ def _log_cn_number_rewrites(request: ReviewSummaryRequest, draft: _Draft) -> Non
         logger.info("review-summary 中文数字观测", extra={"cn_number_tokens": missing})
 
 
-# 集体指代族（D16.6 观测项专用）。代答档（D16.4）是固定禁用语表的**逐字子串**比对，
-# s05 真机第四枪把代答写成"其余节点无**实质**异议"——"无异议"被插字断开，词表零命中、整句放行，
-# 这是代答档的第一个真实漏判，也是 prompt-only 约束第五次被真机绕过。
-# 本轮口径 = 只观测这一族的真实说法分布，**不放宽词表、不扳闸**：判据一旦放宽到
-# "任何否定式表态"，会连带扫进"其他部门无意见""均未通过会签"这类合法说法，而插字变体的
-# 真实分布目前只有一例——没有误伤面数据就扳闸，等于拿最核心的区块赌。
+# 集体指代族（D16.6 观测项，D18 放宽观测面；仍**只观测、不扳闸**）。代答档（D16.4）是固定禁用
+# 语表的**逐字子串**比对，s05 真机第四枪把代答写成"其余节点无**实质**异议"——"无异议"被插字断开，
+# 词表零命中、整句放行，这是代答档的第一个真实漏判，也是 prompt-only 约束第五次被真机绕过。
+# D18 补的是观测器自己的第二个洞：s09 真机 overall 写"其余为执行层面提醒"，"其余"在这里是
+# **代词**（指代未写字的那些人），后面不接任何集体名词，旧正则要求 4 字内出现名词 → 零命中。
+# 漏判的观测器等于没有观测：它交回来的"真实分布"是残缺分母，据此做的升闸判断必然偏乐观。
+# 噪声封顶：代词分支必须紧跟一个**立场/态势谓词**才算嫌疑，"其他付款条款按标准模板执行"这类
+# 普通名词短语仍不进清单——否则正当概括会淹没真实代答，观测行没人再看。
+_PARROT_HEAD = r"(?:其余|其他|其它|剩余)"
+_PARROT_NOUNS = r"节点|部门|角色|人员|评审|同事|单位|各方"
+# 代词用法必须配谓词提示词才计入（集体名词分支沿用既有口径，不额外加条件）
+_PARROT_STANCE_HINTS = r"异议|分歧|认可|同意|通过|一致|为|是|无|没|未"
+_PARROT_TAIL = r"[^，。；！？]{0,24}"
 _PARROT_COLLECTIVE = re.compile(
-    r"(?:其余|其他|其它|剩余)[^，。；！？、]{0,4}"
-    r"(?:节点|部门|角色|人员|评审|同事|单位|各方)"
-    r"[^，。；！？]{0,24}"
+    _PARROT_HEAD
+    + r"(?:"
+    + r"[^，。；！？、]{0,4}(?:" + _PARROT_NOUNS + r")"  # 集体名词分支（D16.6 原样）
+    + r"|(?![^，。；！？、]{0,4}(?:" + _PARROT_NOUNS + r"))"  # 代词分支：先排除名词紧邻
+    + r"[^，。；！？、]{0,2}(?:" + _PARROT_STANCE_HINTS + r")"
+    + r")"
+    + _PARROT_TAIL
 )
 
 # prompt 给出的唯一合法句式（"其余节点未填写意见"）陈述的是输入事实（`comment` 为空），
 # 不是替人表态，必须放过——否则每个带空意见的单子都会刷出观测行，没人再看。
+# D18 之后 ②分布句自己就带着这个事实（"共 M 条…其中 N 条填写了意见"，缺席条数由减法可推），
+# 豁免口径不变：带"未填写/未提交…"这类事实词的片段仍然不记观测。
 _SILENCE_FACT_WORDS = ("未填写", "未提交", "未发表", "未写", "未留", "空白")
 
 
@@ -1018,9 +1047,10 @@ def _parrot_suspects(text: str, corpus: str) -> list[str]:
     判据边界与代答档同源（只认评审人亲手写的字）：评审人自己这么写过就不算代答。
     """
     return [
-        fragment
-        for fragment in _PARROT_COLLECTIVE.findall(text)
-        if not any(word in fragment for word in _SILENCE_FACT_WORDS) and fragment not in corpus
+        fragment.group(0)
+        for fragment in _PARROT_COLLECTIVE.finditer(text)
+        if not any(word in fragment.group(0) for word in _SILENCE_FACT_WORDS)
+        and fragment.group(0) not in corpus
     ]
 
 

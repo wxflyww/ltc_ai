@@ -12,6 +12,12 @@
 
 噪声纪律：prompt 已给出唯一合法句式"其余节点未填写意见"，它是**对输入事实的陈述**而不是
 立场断言，所以必须被白名单放过——否则观测行天天刷屏，没人再看。
+
+D18（2026-10-10）放宽的是**观测面本身**，不是闸门：真机第七枪 s09 的 overall 写"…其余为执行
+层面提醒"，"其余"当**代词**用、后面不接集体名词，旧正则零命中——漏判的观测器交回来的是残缺
+分母，据它判断"要不要升闸"必然偏乐观。代词分支必须紧跟立场谓词才算嫌疑，"其他付款条款按模板
+执行"这类正当名词短语仍不进清单。**处置仍为零拦截**：不丢主题、不丢 overall、不打标记、不旁路
+缓存（用户口径"观测 + 装配，先不升闸"，下一轮真机分布再谈升闸）。
 """
 import json
 from contextlib import contextmanager
@@ -149,3 +155,52 @@ def test_collective_wording_written_by_a_reviewer_is_not_logged(caplog):
         with _stub_model(_draft(_PARROT, _THEME_A, _THEME_B), _OPINIONS_OK):
             svc.generate_review_summary(_request(opinions))
     assert [r for r in caplog.records if "代答观测" in r.getMessage()] == []
+
+
+# ------------------------------------------------ D18：观测面放宽（代词用法，仍不扳闸）
+
+# s09 真机第七枪的 `overall` 原句，尾句逐字抄自 prompt 的范例（那句范例本身就是代答形态）。
+# 旧正则要求"其余"之后 4 字内出现集体名词，而这里"其余"是**代词**（指代未写字的那些人），
+# 没有名词可锚 → 观测行零输出。漏判的观测器等于没有观测：它给出的"真实分布"是残缺分母。
+_S09_OVERALL = "意见聚焦采购付款与分包风险管控，其余为执行层面提醒。"
+
+
+def test_pronoun_use_parrot_is_also_observed(caplog):
+    """D18-A：代词式"其余为…"同样进观测清单；处置仍为**零拦截**（主题、overall、标记、缓存全不受影响）。"""
+    with caplog.at_level("INFO"):
+        with _stub_model(_draft(_S09_OVERALL, _THEME_A, _THEME_B), _OPINIONS_OK) as stub:
+            data = svc.generate_review_summary(_REQUEST())
+    line = [r for r in caplog.records if "代答观测" in r.getMessage()]
+    assert len(line) == 1
+    assert any("其余为执行层面提醒" in phrase for phrase in line[0].parrot_phrases)
+    # 只观测的六件事
+    assert [t.text for t in data.review_summary.themes] == [_THEME_A["text"], _THEME_B["text"]]
+    assert _S09_OVERALL in data.review_summary.text
+    assert data.degraded_sections == []
+    assert len(stub.calls) == 2
+    assert get_cached(make_cache_key(_REQUEST())) is not None
+
+
+def test_negated_pronoun_variant_is_observed(caplog):
+    """同类代词形态（无集体名词、含否定式表态）一并纳入观测，否则下一轮分布仍不完整。"""
+    overall = "意见聚焦管辖地与开票两处，其余均无实质分歧。"
+    with caplog.at_level("INFO"):
+        with _stub_model(_draft(overall, _THEME_A, _THEME_B), _OPINIONS_OK):
+            data = svc.generate_review_summary(_REQUEST())
+    line = [r for r in caplog.records if "代答观测" in r.getMessage()]
+    assert len(line) == 1
+    assert any("无实质分歧" in phrase for phrase in line[0].parrot_phrases)
+    assert overall in data.review_summary.text  # 仍不扳闸
+
+
+def test_plain_clause_about_other_subjects_is_not_logged(caplog):
+    """反噪声锁（放宽的代价必须封顶）："其他 + 普通名词短语"没有立场谓词，不该刷观测行——
+    否则"其他付款条款按模板执行"这类正当概括会淹没真实代答，观测就失去意义。"""
+    with caplog.at_level("INFO"):
+        with _stub_model(
+            _draft("意见聚焦管辖地与开票两处，其他付款条款按标准模板执行即可。", _THEME_A, _THEME_B),
+            _OPINIONS_OK,
+        ):
+            svc.generate_review_summary(_REQUEST())
+    assert [r for r in caplog.records if "代答观测" in r.getMessage()] == []
+

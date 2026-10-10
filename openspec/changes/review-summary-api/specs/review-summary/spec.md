@@ -50,7 +50,7 @@
 ### Requirement: AI 生成仅限总述主题与意见摘要两处
 响应中 AI 生成的文本 SHALL 只有总述的 `overall` 与 `themes[].text`（对外仍表现为 `review_summary.text` 的组成部分）以及 `opinion_details[].summary`（压缩对应 `comment` 原文、保留其主张与条件）。`comment` 为空的意见 SHALL NOT 参与摘要生成（不进批量输入），其 `summary` 为 `null` 且 SHALL NOT 计入丢弃或触发 `opinion_details.model` 降级标记——真实面板多数评审人只表态不写字，误计将连带缓存旁路失效（change design.md D7）。模型对 `comment` 近空（如"同意。"）的意见**按 prompt 契约显式返回 `summary: null`** 时同样 SHALL NOT 计入丢弃：`opinion_details.model` 只在模型**漏交该 index**（未按逐条对应覆盖输入）时出现（change design.md D14）。其余全部字段 SHALL 为输入原文装配，零 AI 改写：`route_reason` 照搬、`risk_register` 全字段照搬、「处置参考」一律引用清单应对措施原文，AI 对动作、数字、条款与决策零生成，不输出「建议通过/建议驳回」类决策建议。
 
-**总述契约（2026-10-09 契约级重构，change design.md D16/D16.1/D16.2）**：`review_summary.text` SHALL 由服务端按固定句式拼接为 `①合同要素句。②结论分布句。overall。主题1（节点名…）；主题2（节点名…）……`。①② 两句本就确定性，SHALL 由服务端从请求体装配、SHALL NOT 交给模型写作：① 与兜底稿的要素句同源，② 与注入 prompt 的「结论分布」注记**共用同一事实句**（面板、prompt、兜底稿三处不许出现第三份措辞）。主题句后的节点名 SHALL 由服务端从该主题的 `opinion_refs` 反查 `opinions[i].node_name` 去重保序派生（该名字若已被主题句逐字点过则不再重复附），SHALL NOT 由模型自报——归属因此结构性不可能错。模型 SHALL 只提交 `{"overall": str|null, "themes": [{"text": "主题句", "opinion_refs": ["opinions[i]"]}]}`：`themes` 最多 4 条、每条 `opinion_refs` 最多 3 个且只能是指向有字意见的 `opinions[i]` 整下标路径；`overall` 为一句 ≤40 字的态势判断，无话可说时输出 `null`、SHALL NOT 硬凑、SHALL NOT 出现任何节点名。主题句点名**可选**，点则 SHALL 逐字且只能点本主题自己 `opinion_refs` 里的节点。主题句 SHALL NOT 把单条 `comment` 的多个细项用顿号逐条串入（细项完整展开归「各节点意见详情」，change design.md D13 反罗列禁令保留）。归并范围：`comment` 有实质内容的意见（含动作为「通过」但写了关键事实者）在容量内优先全覆盖，超出容量（≤4 主题 × ≤3 refs）时按关键性取舍，未纳入者由 `opinion_details` 逐条承载——主题是**关键性视图**而非全集视图（change design.md D16.2-R5，据此修订 D12 的"凡…即纳入"）。全部意见均无实质内容时 SHALL NOT 硬凑分歧或关注点。
+**总述契约（2026-10-09 契约级重构，change design.md D16/D16.1/D16.2）**：`review_summary.text` SHALL 由服务端按固定句式拼接为 `①合同要素句。②结论分布句。overall。主题1（节点名…）；主题2（节点名…）……`。①② 两句本就确定性，SHALL 由服务端从请求体装配、SHALL NOT 交给模型写作：① 与兜底稿的要素句同源，② 与注入 prompt 的「结论分布」注记**共用同一事实句**（面板、prompt、兜底稿三处不许出现第三份措辞）。存在 `comment` 为空的意见时，② SHALL 追加服务端计算的事实分句「其中 N 条填写了意见」（N = `comment` 非空的意见条数；change design.md D18/D18.1——**陈述方向取正向计数**，缺席条数由"共 X 条 − N 条"确定可推，事实真空同样被补掉）：未表态节点的数量 SHALL 由服务端陈述，SHALL NOT 依赖模型计数或概括——真机 3 例代答全部出自"输入里有、prompt 从不提、服务端也不说"的事实真空。该数字与"共 X 条"同经「结论分布」注记进入数字抽验语料（change design.md D9 同纪律），模型照抄它 SHALL 视为溯源成功；反向同理：模型若自写"其余 K 条未填写意见"，K 不在语料里（闸只逐字比对、不做减法），SHALL 按语料外数字处置。主题句后的节点名 SHALL 由服务端从该主题的 `opinion_refs` 反查 `opinions[i].node_name` 去重保序派生（该名字若已被主题句逐字点过则不再重复附），SHALL NOT 由模型自报——归属因此结构性不可能错。模型 SHALL 只提交 `{"overall": str|null, "themes": [{"text": "主题句", "opinion_refs": ["opinions[i]"]}]}`：`themes` 最多 4 条、每条 `opinion_refs` 最多 3 个且只能是指向有字意见的 `opinions[i]` 整下标路径；`overall` 为一句 ≤40 字的态势判断，无话可说时输出 `null`、SHALL NOT 硬凑、SHALL NOT 出现任何节点名。主题句点名**可选**，点则 SHALL 逐字且只能点本主题自己 `opinion_refs` 里的节点。主题句 SHALL NOT 把单条 `comment` 的多个细项用顿号逐条串入（细项完整展开归「各节点意见详情」，change design.md D13 反罗列禁令保留）。归并范围：`comment` 有实质内容的意见（含动作为「通过」但写了关键事实者）在容量内优先全覆盖，超出容量（≤4 主题 × ≤3 refs）时按关键性取舍，未纳入者由 `opinion_details` 逐条承载——主题是**关键性视图**而非全集视图（change design.md D16.2-R5，据此修订 D12 的"凡…即纳入"）。全部意见均无实质内容时 SHALL NOT 硬凑分歧或关注点。
 
 **结构校验与处置阶梯（判据一律为服务端确定性比对，SHALL NOT 采信模型自报）**：
 - **G1** 每条主题的 refs 逐条剔除引用清单外的路径（顺序保持、去重），剩 ≥1 条即照常采信该主题，**剩 0 才判违规**（归属变窄不变假，change design.md D16.1-R3）；
@@ -83,6 +83,13 @@
 - **WHEN** `opinions` 全部 `comment` 为空，或只写"同意/无异议"类无实质内容的话
 - **THEN** 系统 SHALL NOT 为凑内容而编造分歧或关注点
 - **AND** 总述 SHALL 只有服务端装配的 ①合同要素 + ②结论分布两句、`themes=[]`，且该请求 SHALL NOT 发起任何模型调用
+
+#### Scenario: 填写了意见的条数由服务端陈述
+- **WHEN** `opinions` 里既有写了字的也有 `comment` 为空的意见
+- **THEN** ②结论分布句 SHALL 形如「共 X 条意见：…，其中 N 条填写了意见」，该计数 SHALL 由服务端确定性计算（判据 = `comment.strip()` 非空），SHALL NOT 出自模型自报
+- **AND** 全部意见都有实质内容时 SHALL NOT 追加该分句，② 句逐字保持原口径
+- **AND** 分句里的数字 SHALL 已随「结论分布」注记进入数字抽验语料，模型在 `overall` 或主题句照抄它 SHALL NOT 被判为编造
+- **AND** 服务端 SHALL NOT 因此替任何未表态节点断言立场：该分句只计数、不评价，SHALL NOT 出现"无异议""一致认可"类正面定性词
 
 #### Scenario: 主题引用空意见或点名未背书时先定向重试再整条丢弃
 - **WHEN** 某主题的 `opinion_refs` 指向 `comment` 为空的意见（G2），或主题句点名的节点不在该主题 refs 反查出的节点名集合内（G3 未背书），或 refs 剔除清单外路径后剩 0（G1），或输出形状失守

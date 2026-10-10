@@ -160,7 +160,11 @@ def test_all_comments_empty_skips_model_calls_entirely():
     assert "review_summary.model" not in data.degraded_sections
     assert "review_summary.fallback" not in data.degraded_sections
     assert data.review_summary.themes == []
-    assert data.review_summary.text == "该合同为软件集成合同，合同总额 14480000 CNY，综合毛利率 5.05%。共 3 条意见：通过 3 条。"
+    # D18：全员空意见时 ②分布句自己说清"几条写了字"（正向计数，此处为 0）——零模型调用分支
+    assert data.review_summary.text == (
+        "该合同为软件集成合同，合同总额 14480000 CNY，综合毛利率 5.05%。"
+        "共 3 条意见：通过 3 条，其中 0 条填写了意见。"
+    )
     assert get_cached(make_cache_key(request)) is not None
 
 

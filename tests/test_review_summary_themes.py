@@ -477,7 +477,8 @@ def test_all_comments_empty_still_carries_distribution_sentence():
     with _stub_model() as stub:
         data = svc.generate_review_summary(request)
     assert len(stub.calls) == 0
-    assert "共 2 条意见：通过 2 条。" in data.review_summary.text
+    # D18：这一句多了服务端自己装配的"其中 0 条填写了意见"——零调用分支同样把事实说全
+    assert "共 2 条意见：通过 2 条，其中 0 条填写了意见。" in data.review_summary.text
 
 
 # ------------------------------------------------- 必测 12：0 合法主题 → 兜底稿
