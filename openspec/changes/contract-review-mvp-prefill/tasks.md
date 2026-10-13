@@ -502,3 +502,264 @@
 | 测试 | `test_prefill_prompt_carries_contract_type_rule` 重写断言：正向词表必须为那 5 个、11 个反例词必须显式点名且出现"都不算"、**`集成服务合同` 必须写明为服务类**、旧词表形态不得复活（5 条反向断言） |
 | 复核技能 `ltc-prefill-qa` | 词表收窄至 5 词 + 反例词扩到 11 个 + **"先看名字有没有「服务」二字"作为第一判据** + "集成服务合同 = 服务类，最容易判反" |
 
+## 18. 修订记录：`payment_terms` 口径定案为「完整的付款触发条件句」（第十八轮，2026-10-12）
+
+**起因**：复核东软《技术服务合同》（芜湖市妇幼保健院 0904GE彩超）d02 返回，报告见 `tmp/prefill-runs/QA-东软技术服务合同-2026-10-10.md`。该合同第四条付款条款结构为：
+
+| 行 | 原文 | 归属 |
+|---|---|---|
+| 47 | `1.技术服务费总额为￥15000.00（大写人民币壹万伍仟元整）。` | 金额 → `contract_amount` |
+| 51 | `合同生效后7（七）个工作日内，一次性支付全部费用…` | 付款触发条件句 |
+| 53 | `付款方式：甲方自带汇票/电汇/支票；` | 支付手段 → `payment_method` |
+| 55 | `乙方收到甲方相应付款后开具等额的增值税发票` | **后置型**开票义务 |
+| 57 | `乙方开户银行和名称、账号为：` | 银行账号 |
+
+我方初步把疑点框成「`payment_terms` 是否应包含发票条款」，即「付款条件句 vs 钱流转全部约定」的二选一。
+
+**🔴 用户纠偏（2026-10-12，第 6 次同类纠错）**：该框法是**伪二分**。「甲方收到乙方开具的增值税专用发票后 30 日内付款」这一整句**本身就是一个付款触发条件**，其中的「收到发票」与「终验合格」「交付验收」**语法同构**，都是**起算锚点**（回答"什么阶段付款"），**不是**付款之外的另一类约定。→ **不存在"含不含发票"这个维度。**
+
+**定案口径（用户裁定，无需业务方确认）**
+
+> **`payment_terms` = 完整的付款触发条件句，其起算锚点 SHALL 一并取到。**
+
+- 付款触发条件结构 = **【起算锚点】+【期限】+【付款动作】**。
+- 起算锚点类型 = **时间**（合同生效后）/ **交付**（交付验收后）/ **验收**（终验合格后）/ **发票**（收到发票后）—— 四类**同等对待**。
+- 判定含发票文字是否属触发条件**只看前置 / 后置**：前置型（「收到发票后…付款」）→ 锚点 → **取**；后置型（「收到付款后开票」）→ 付款之后的义务 → **不取**。
+- 非触发条件内容一律不进本字段：后置开票义务、银行账号 / 开户行、支付手段词（后者由 `payment_method` 承接）。
+- → **本合同第 55 行为后置型，当前 `payment_terms` 未取它 = 行为正确**（本次复核不构成缺陷）。
+
+**改动清单**
+
+- [x] 18.1 `prompts/contract_review.yaml` 的 `prefill.user` 段 `payment_method` / `payment_terms` 条重写：口径由"分期与条件条款的整段原文"改为"完整的付款触发条件句"，补锚点四类、前置/后置判据、非触发条件排除项。**`review` 的 7 条 prompt 零改动**（hunk 全落在 `prefill:` 段）
+- [x] 18.2 `app/capabilities/contract_review/prefill_prompts.py` 的 `_FIELDS["contract_info"]` 同步：`payment_terms` 行按新口径重写（通用说明 + 字段级说明两处落点按既有惯例同步）
+- [x] 18.3 本 change spec delta `specs/contract-review/spec.md`：① `payment_terms` 主规则改写为"完整的付款触发条件句"；② 新增专项条款「付款触发条件句的口径」（锚点结构 + 四类锚点同等 + 前置/后置判据 + 排除项）；③ Scenario `付款方式与付款条件的边界` 的 THEN 行同步；④ **新增 2 条 Scenario** —— `付款触发条件的锚点必须一并取到`（前置型发票锚点）、`后置型开票义务不进付款条件`（本合同形态）
+- [x] 18.4 `tests/test_contract_review_prefill.py`：`test_prefill_prompt_carries_payment_terms_trigger_clause`（新增）—— 断言 prompt 必须写明「完整的付款触发条件句」「锚点」四类（时间/交付/验收/发票）、前置 vs 后置判据、以及排除项；并保留**反向断言**：旧的「分期与条件条款的整段原文」表述不得复活
+- [x] 18.5 验证：`pytest tests/test_contract_review_prefill.py -q`、`openspec validate contract-review-mvp-prefill --strict`
+
+**改动性质**：**纯 prompt 规则澄清 + spec 口径固化**。`payment_terms` 的 schema（`_nullable_string()`，无长度/枚举约束）、字段名、字段集合、响应结构**均零改动**；服务端业务代码**零改动**（规则只能在 prompt 层实现，服务端 SHALL NOT 做字符串后处理）。**不新增 change** —— 沿用 §11 / §13 / §14 结论：主 spec 里 prefill 出现 0 次，只能就地修订在途 delta。
+
+⚠️ **连带待办**：口径文档中 `payment_terms` 的"整段原文"旧描述需同步修订（接口文档 `docs/integration/2026-09-16-…` §4.x 与设计文档 `docs/superpowers/specs/2026-09-15-…`），本轮暂未动。
+
+📌 **教训（第 6 次同类错误）**：给字段划"含 / 不含"边界前，先把**句子的语法结构**拆开（本体 + 锚点/修饰），确认那个"可选项"是否真的是本体的一部分。本例中"发票"根本不是可选项，而是**锚点**。同类错误已 6 次（`currency` 恒 CNY、「开发」入词表、千分位"早被剥"、"含 guarantee 键⇒scope=all"、内网推送"凭据缺失"），**共性是凭直觉造分类而未先核验结构**。
+
+## 19. 修订记录：服务日期禁令的作用域（第十九轮，2026-10-12）
+
+**起因**：复核东软《技术服务合同》（芜湖市妇幼保健院 0904GE彩超）d02，`service_end_date` 返回 `null`。合同事实：
+
+| 位置 | 原文 |
+|---|---|
+| 第 15 行 | `**签订时间：** 2026 年9月4日` |
+| 第 33 行 | `# 第二条乙方应按以下要求完成技术服务工作：`（= 服务条款） |
+| 第 37 行 | `2.技术服务期限： 2026年9月4日 ；` |
+
+→ 该日期**既是服务条款内的绝对日期、又与签订日同一天**。
+
+**🔴 本轮纠正一处此前的误框（重要）**
+
+2026-10-10 的复核报告把它写成「**两条规则冲突，需业务方拍板**」（`tmp/prefill-runs/QA-东软技术服务合同-2026-10-10.md` §五）。**该框架不准确**，本轮更正：
+
+- 规则原文（`contract_review.yaml` §服务类）中，「**不得用合同签订日等其他日期顶替**」这句**只挂在 `service_start_date` 上**，**对 `service_end_date` 没有任何限制**；
+- 因此**不存在"两条规则打架"** —— 真相是**模型把 start 的限制误用到了 end**，属**漏抽**；
+- 判据澄清：`service_end_date` 只要**取值来源在服务 / 售后 / 质保条款内**即应返回，**与它是否等于签订日无关**（「期限」语义即指截止时点）。
+
+**用户定案（2026-10-12）**：合同是"一天完成的远程单次服务"，「技术服务期限」即服务结束时间 → **`service_end_date` 应取该日期**。并确认 **Q1 不需要业务方确认**（属 prompt 澄清，非业务口径分歧）。
+
+**修订后口径**
+
+> 「不得用合同签订日顶替」**SHALL 仅作用于 `service_start_date`**，**SHALL NOT 作用于 `service_end_date`**；后者只要在服务 / 售后 / 质保条款内取到绝对日期，**即使与签订日相同也应返回**。系统 SHALL 依**来源**判断，SHALL NOT 因"恰等于签订日"而丢弃。
+
+**改动清单**
+
+- [x] 19.1 `prompts/contract_review.yaml` 的 `prefill:` 段「服务类」条：追加作用域澄清（禁令只约束 start、end 即使同日也应返回、判据看来源）。**`review` 的 7 条 prompt 零改动**
+- [x] 19.2 `app/capabilities/contract_review/prefill_prompts.py` 的 `_FIELDS["contract_info"]` 的 `service_end_date` 行同步同一澄清
+- [x] 19.3 本 change spec delta：服务日期需求下**新增专项条款「「不得用签订日顶替」的作用域」**；**新增 Scenario `服务条款内的绝对日期与签订日相同时仍取作服务结束时间`**
+- [x] 19.4 `tests/test_contract_review_prefill.py`：新增 `test_prefill_prompt_scopes_signing_date_prohibition_to_start_only`（断言"只约束 service_start_date"、本合同真实日期、"来源是否在服务条款内"）
+- [x] 19.5 `docs/integration/…prefill-api-integration.md` §4.3 的 🔷 判定说明块补作用域澄清
+- [x] 19.6 验证：`pytest tests/test_contract_review_prefill.py -q` → **54 passed**；`openspec validate contract-review-mvp-prefill --strict` → **is valid**；yaml diff 两 hunk 均落在 `prefill:` 段
+- [x] 19.7 **东软合同 d02 实跑（8 次）** → 🔴 **修复有效但未达稳定**：
+
+  | 字段 | 改前 | 改后（8 次） | 判定 |
+  |---|---|---|---|
+  | `service_end_date` | `null`（3/3） | `"2026年9月4日"` **6/8** | ⚠️ 从 0% 提升到 75%，但**未稳定** |
+  | `service_start_date` | `null`（3/3） | `null` **5/8**（**3 次被误填为该日期**） | 🔴 **出现回归** |
+
+  → **结论：作用域澄清改善了 target 字段，但暴露规则另一处不足** —— 模型对"同一日期该进 start 还是 end"仍不稳定（见 §19.8）。
+- [x] 19.8 ✅ **已落（2026-10-12 同轮补）**：规则对「服务 / 售后 / 质保条款内以**单一绝对日期**给出『服务期限』」这一形态**缺少显式处置** —— 该日期**同时满足** `service_start_date` 的来源条件（在服务条款内）、又**触发**其禁止条件（== 签订日）→ 模型每次解析不同。**补规则：该类"单一日期 / 『期限』表述"只作 `service_end_date`，`service_start_date` 保持 `null`（「期限」语义即截止时点；单点不界定起始）。** 落点见 19.9–19.12。
+- [x] 19.9 落 prompt：`prompts/contract_review.yaml`「服务类」条 + `prefill_prompts.py` 的 `service_start_date` / `service_end_date` 两行各补该规则（start 行给"本字段保持 null"直述、end 行给"只作本字段"直述，**两侧对称钉住**，防模型只读到单侧 spec 就填 start）
+- [x] 19.10 spec delta：§19 专项条款下**新增「单一日期形态的处置」**；Scenario `服务条款内的绝对日期与签订日相同时仍取作服务结束时间` 加一条 AND（SHALL NOT 对称填充 `service_start_date`）
+- [x] 19.11 测试：`test_prefill_prompt_scopes_signing_date_prohibition_to_start_only` 追加 4 条断言（正向 `单一绝对日期` / `只作service_end_date` / `service_start_date保持null`；反向 `对称`）
+- [x] 19.12 ✅ **验证通过（目标达成）**：`pytest tests/test_contract_review_prefill.py -q` → **54 passed**；`openspec validate contract-review-mvp-prefill --strict` → **is valid**；yaml diff 仅落在 `prefill:` 段（非 prefill 各段逐行相同）。**东软 d02 复跑 ×8 → `service_end_date` = `"2026年9月4日"` **8/8**、`service_start_date` = `null` **8/8**（改前：end 6/8、start 3/8 误填）→ 稳定达标**。回归：c4（**区间型** 2026-04-01~2027-03-31 → 两字段均填，符合预期，新规则不误伤区间）/ c1（政府合同 → 两者仍 `null`，无退化）。
+
+**改动性质**：纯 **prompt 规则澄清 + spec 口径固化**。字段名 / 字段集合 / schema / 响应结构**零改动**；服务端业务代码**零改动**（规则只能在 prompt 层实现）。**不新增 change**（沿用 §11 / §13 / §14 / §18 结论）。
+
+📌 **本条与 §18 的对照**：§18 是"取消一个伪二分"（发票不是可选维度）；本条是"**厘清一条既有约束的作用域**"（禁令只管 start）。两条同属"**边界/作用域**"类问题 —— 与其新增规则，不如先把既有规则的适用边界读准。**教训：给"是否取某值"下结论前，先确认那条约束的 SHALL 主体是哪个字段。**
+
+📌 **§19.8 追加教训（2026-10-12）**：**当同一个原文实体同时满足 A 字段的「取」条件、又触发 B 字段的「禁」条件时（此例：一个绝对日期既在服务条款内=start 可取的来源、又 == 签订日=start 的禁止项），只声明两条独立规则仍会随机 —— 必须在 prompt 里为这一「单一形态」显式指定唯一归属**（此处：单一日期只作 end、start 恒 null）。否则模型每次在"按来源可取"与"按禁令不可取"之间重新博弈，表现为同一合同跨次抖动。**这解释了"修复有效但不稳定"的机制**：不是规则写错，而是**该形态未被覆盖**。
+
+---
+
+## 20. 修订记录：九项口径定案 + 两项技术缺陷修复（第二十轮，2026-10-12）
+
+**起因**：东软《技术服务合同》+「26年运维合同」的 d02 / d03 复核共暴露 9 项问题；业务方（吴钢 / 王晓丽）与用户于 2026-10-12 逐条定案。
+
+**定案清单**：
+
+| 项 | 定案 | 主要落点 |
+| --- | --- | --- |
+| **A1** | 金额 / 比例数值**逐字照抄本合同原文**，严禁套用示例值 / 行业惯例 | yaml 金额段 + `_FIELDS`（`payment_amount`、`guarantee.amount`）+ `_EXAMPLES`（示例值 `5%`→`8%`） |
+| **A2** | `payment_terms` 取句**保留完整主语**、不得截断 | yaml + `_FIELDS` |
+| **Q2** | `evidence[].section` **逐字照抄**原文标题（含空格与标点，不规范化） | yaml【章节位置】+ `_FIELDS` evidence + `_EXAMPLES`（示例改为照抄形态：无空格 + 全角冒号） |
+| **Q4①** | `service_valid_months` ~~排除质保期 / 保修期 / 保密期 / **有效期**~~ → **2026-10-13 补正为「按语义取」**：「合同（的）有效期 / 本合同有效期为 N 年」**计入**（服务类合同尤其）；仅保留 质保期 / 保修期 / 缺陷责任期 / 保密期 排除。详见 **§23** | yaml + `_FIELDS` |
+| **Q4②** | `inspection_count` 接受**频次表述**且**整句保留** | yaml + `_FIELDS` |
+| **Q6** | 约束付款的**并列条款**并入 `payment_terms` | yaml + `_FIELDS` |
+| **Q7** | 服务期为**起止区间** → `service_valid_months` = **null**（不推算） | yaml + `_FIELDS` |
+| **Q8** | `guarantee.type` **新增「预付款保函」**（金额等于预付款额者） | `prefill_response_formats.GUARANTEE_SCHEMA` 枚举 + yaml / `_FIELDS` 判别规则 |
+| **Q9** | `payment_method` **原文原样**（含主语 / 修饰词） | yaml + `_FIELDS` |
+| **Q10** | `payment_terms` **多阶段全部拼接**（按原文顺序） | yaml + `_FIELDS` |
+| ~~Q3~~ | 里程碑默认口径（`deliver` vs `begin`）—— **待业务方确认，本轮不动** | 无改动 |
+
+**改动清单**：
+
+- [x] 20.1 `prompts/contract_review.yaml` 的 `prefill:` 段 —— Q2 章节位置、A1 金额数值、Q4①/Q7 服务期限、Q4② 巡检、Q6/Q9/Q10/A2 付款字段
+- [x] 20.2 `prefill_prompts.py` 的 `_FIELDS` —— 上述各项的**字段级**规则（`inspection_count` / `service_valid_months` / `payment_terms` / `payment_method` / `payment_amount` / `guarantee.type` / `guarantee.amount` / evidence 的 section 说明）
+- [x] 20.3 `prefill_response_formats.py` —— `GUARANTEE_SCHEMA.type` 枚举**放宽**，新增 `"预付款保函"`（本轮**唯一非 prompt 改动**；仍为 `string|null`，**不新增字段 / 不改名 / 不改字段集合**）
+- [x] 20.4 `_EXAMPLES` —— contract_plan 的 `section` 示例改为**照抄形态**（`"第四条付款方式及条件："`，去掉诱导规范化的旧示例）；guarantee 的 amount 示例值由 `"5%"` 改为 `"8%"`（避免模型照抄示例值 —— **A1 的直接诱因**）
+- [x] 20.5 本 change spec delta —— 「预填字段数据契约」下追加第二十轮条款；「履约保证金多笔抽取」的 `type` 放宽并加判别；「预填原文依据标注章节位置」追加 section 逐字规则；新增 **8 条 Scenario**
+- [x] 20.6 `tests/test_contract_review_prefill.py` —— 新增 `test_prefill_prompt_carries_twentieth_round_rules`（13 条断言，含反向断言"旧示例不得复活""示例值 5% 不得复活"）+ `test_guarantee_type_enum_includes_prepayment_bond`
+- [x] 20.7 `docs/integration/…prefill-api-integration.md` 与设计文档同步（字段口径 + enum 放宽的下游提示）
+- [x] 20.8 验证（见下）
+
+**验证**：
+- `pytest tests/test_contract_review_prefill.py -q` → **56 passed**（原 54 + 新 2）
+- `openspec validate contract-review-mvp-prefill --strict` → **is valid**
+- yaml diff 仅落在 `prefill:` 段（非 prefill 各段逐行相同）
+- 实跑：东软 d02、26年运维 d02 / d03、c1、c4（结果见当日复习报告）
+
+**改动性质**：**prompt 规则 + 一处取值集合放宽**。字段名 / 字段集合 / 响应结构 / 请求参数**零新增零改名**；服务端业务代码**零改动**（规则只在 prompt 层实现；`GUARANTEE_SCHEMA` 仅放宽 enum 取值）。**不新增 change**。
+
+⚠️ **对外影响提示**：`guarantee[].type` 新增可取 `"预付款保函"` —— 属**取值集合放宽**。下游若对该字段做**严格枚举解析**（只认"履约保函/履约保证金"），需同步认知，否则遇到新值可能反序列化失败。
+
+📌 **第二十轮教训**：**"示例值污染"是一类独立的失效模式** —— A1（26年运维 `50%` 被答成 `5%`）的诱因不是规则缺失，而是 prompt 示例里恰好写了 `"5%"`，模型直接照抄。**凡示例中的具体数值 / 文本，都必须选成"不可能与真实答案撞车"的值，并在规则里写明"仅格式示意、不得照抄"。** 这与 §19.8 的"形态未覆盖"不同：§19.8 是**规则缺口**，A1 是**示例污染**。
+
+
+---
+
+## §21 第三轮复核修订（2026-10-13）
+
+**起因**：第三轮样例测试（东软 / 26年运维 / 吉林银行 / 中汇 四合同）复核；业务方答复两项口径，并暴露缺陷。
+
+**本轮定案**：
+
+| 编号 | 定案 | 来源 |
+| --- | --- | --- |
+| **Q3 / B7** | 里程碑命名：付款条件**无成果物**约定 → 视为**预付款** → 取 `启动(begin)`；**有成果物** → 按成果物取 `交付(deliver)` 或 `验收`；`contract_plan` **只从付款条件拆**，不得自造无付款金额的收尾/验收项 | 业务方 2026-10-13 |
+| **B-1** | 保函 `type` 按「保函种类表」（开立方→受益人 / 担保时间段 / 核心保障 / 常见金额）判别；🔴 **不得默认归「履约保函」** | 业务方 2026-10-13 |
+| **A3** | `guarantee` **不得由非担保条款生成** —— 违约责任 / 违约赔偿 / 违约金不构成担保；无独立担保条款时 SHALL 为 `[]` | 技术缺陷（吉林银行幻觉） |
+
+**改动清单**：
+
+- [x] 21.1 `prompts/contract_review.yaml` 的 `prefill:` 段 —— 里程碑命名口径 + 「不得自行追加无付款金额的收尾/验收里程碑」
+- [x] 21.2 `prefill_prompts.py` —— `_FIELDS["contract_plan"]` 里程碑命名口径；`_FIELDS["guarantee"]` 的 `type` 判别按保函种类表重写 + **A3 负向约束**（违约金不是担保）
+- [x] 21.3 本 change spec delta —— 「预填字段数据契约」加第三轮定案块；「履约保证金多笔抽取」的保函性质判别按表强化 + A3；新增 **4 条 Scenario**（无成果物取启动 / 里程碑数=付款阶段数 / 违约金不产生记录 / 付款条款保函判为预付款保函·已有）
+- [x] 21.4 `tests/test_contract_review_prefill.py` —— 新增 `test_prefill_prompt_carries_third_round_rules`
+- [x] 21.5 `QA-26年运维合同-2026-10-12.md` 订正 —— 其中 `type="履约保函"` 系 Q8 定案**之前**的过期结论，已加订正块
+
+**验证**：
+
+- `pytest tests/test_contract_review_prefill.py -q` → **57 passed**（原 56 + 新 1）
+- `pytest tests/ --ignore=tests/two_stage -q` → **613 passed / 1 skipped**（`test_config.py` 一次瞬时失败 —— 因 `config/config-dev.yaml` 被外部同刻修改；单跑 **6 passed**，**非本轮引入**）
+- `openspec validate contract-review-mvp-prefill --strict` → **is valid**
+- yaml diff **仅落在 `prefill:` 段**（非 prefill 各段逐行相同）✅ 红线②
+
+**改动性质**：纯 prompt 规则改动（+ spec / tasks / 测试 / QA 订正）。字段名 / 字段集合 / 响应结构 / 请求参数**零新增零改名**；服务端业务代码**零改动**。**不新增 change**。
+
+**未落地（待用户定）**：
+
+- **A5**（`payment_method` 丢介词「通过」）—— 轻微，可并入下次微调
+- **W1**（服务期限为**绝对区间**时 `service_start_date`/`service_end_date` 双 null，疑 Q7 规则串扰）—— **需模型可达后实跑确认**再改
+- ~~**Q11**（「本合同有效期为 N 年」是否算 `service_valid_months` 来源）—— 待业务方~~ → ✅ **2026-10-13 用户定案：算**（**按语义取**，不再抠字面；见 **§23**）
+- ✅ **已实跑（2026-10-13 10:5x，模型服务恢复）**：A3（吉林银行 d03 `guarantee = []`，幻觉未复现）、Q3/里程碑命名（东软 1 条 `begin`、吉林银行 3 条）、A4（吉林银行恰好 3 条，无自造第 4 条）均**验证通过**。⚠️ 仍留 **W1**（吉林银行 `start` **2/3**）与 **中汇 `contract_plan` 抖动**（均**非本轮引入**）→ `tmp/prefill-runs/实跑复核-2026-10-13.md`
+
+---
+
+## §22 第三轮补充：`guarantee.type` 取值集合扩至「保函种类表」全量（2026-10-13）
+
+**起因**：§21 落地后 `guarantee.type` 仍只有 3 值（`履约保函` / `履约保证金` / `预付款保函`），业务方「保函种类表」其余类型**不可作为取值**（合同出现时只能返 `null`）—— 即"判别规则已覆盖、但取值取不出来"。用户 2026-10-13 指示**扩到表内全部类型**。
+
+**业务方口径（用户 2026-10-13 答复）**：
+
+| 项 | 定案 |
+| --- | --- |
+| 表内「质量·质保保函」 | 实为 **`质量保函` / `质保保函` 两种类型**（**说明相同**），拆为两个取值 |
+| `履约保证金` | 表内**无此项**，按**合同实务常见概念**保留（不删） |
+| d03 实际命中 | 仅 `履约保函` / `履约保证金` **两种**；`预付款保函` 与 投标 / 质量 / 质保 / 支付 **地位相同**，均为**兼容覆盖** |
+
+**最终取值集合（7 值 + `null`）**：`履约保函` / `履约保证金` / `预付款保函` / `投标保函` / `质量保函` / `质保保函` / `支付保函`，或 `null`。
+
+**改动清单**：
+
+- [x] 22.1 `prefill_response_formats.py` —— `GUARANTEE_SCHEMA.type` 枚举由 3 值扩为 7 值（注释同步）
+- [x] 22.2 `prefill_prompts.py` —— `_FIELDS["guarantee"]` 的 `type`：候选值列全 + 新增 投标 / 质量·质保 / 支付 三类判据（按**担保标的**）+ `履约保证金` **实务定位**说明；删除旧「其余种类**不在本字段可选值内** / 取值集合是否扩充**待业务方确认**」表述
+- [x] 22.3 本 change spec delta —— 「履约保证金多笔抽取」的 `type` 取值与取值集合段改为 7 值 + 新增三类判别 + 新增 Scenario「保函种类表内其余类型可被归类」
+- [x] 22.4 `tests/test_contract_review_prefill.py` —— `test_guarantee_type_enum_includes_prepayment_bond` 断言改 7 值；新增 `test_prefill_prompt_carries_guarantee_type_catalog`（正向 4 类 + 反向断言「旧表述不得复活」）
+- [x] 22.5 `docs/integration/…prefill-api-integration.md` 与设计文档同步（enum 全量 + 下游提示）
+- [x] 22.6 验证（见下）
+
+**验证**：
+
+- `pytest tests/test_contract_review_prefill.py -q` → **58 passed**（§21 的 57 + 新 1）
+- `openspec validate contract-review-mvp-prefill --strict` → **is valid**
+- 本轮**未改 `prompts/contract_review.yaml`**（该文件不含 type 枚举）
+
+**改动性质**：**一处取值集合放宽**（扩 enum）+ 对应 prompt 判别。字段名 / 字段集合 / 响应结构 / 请求参数**零新增零改名**；服务端业务代码**零改动**（仅 `GUARANTEE_SCHEMA` 放宽 enum 取值）。**不新增 change**（就地修订在途 delta）。
+
+⚠️ **对外影响提示**：`guarantee[].type` 新增可取 `投标保函` / `质量保函` / `质保保函` / `支付保函`（叠加 §20 的 `预付款保函`）。下游若对 `type` 做**严格枚举解析**，需同步兼容**全部**取值，否则遇到新值可能反序列化失败。
+
+📌 **本轮教训**：**「取值集合是业务概念的表征，不是技术便利」** —— §21 已把业务方表的 3 列判据写进 prompt，却仍锁死 3 值枚举，于是"规则覆盖了、值取不出来"（合同写 质量保函 时只能返 `null`）。**凡业务方给出了分类全集，取值集合 SHALL 与全集对齐**；若某类不在全集内（如 `履约保证金`），须显式记录"按实务保留"及其理由。
+
+---
+
+## §23 第三轮再补正：`service_valid_months` 由「字面」改为「语义」+ d03 命中面澄清（2026-10-13）
+
+**起因**：用户两条澄清 ——
+
+1. **d03 命中面澄清**：d03 **只命中 `履约保函` / `履约保证金` 两种**；`预付款保函` **与其余各类地位相同**，均为**兼容覆盖**（§22 曾写成"主要命中含预付款保函"，**已订正**）。
+2. **Q4① 过死（Q11 定案）**：Q4① 原规定 `service_valid_months` 只取「服务期 / 服务期限」**字面**，且把「**有效期**」列入黑名单 —— 导致「**本合同有效期为两年**」（服务类合同，语义明显即服务期限）被排除。用户定案：**以语义为主、不能写太死**；"明显的"可写死，但「合同有效期为 N 年」模型很容易识别为服务期限 ⇒ **改**。
+
+**本轮定案**：
+
+| 编号 | 定案 | 来源 |
+| --- | --- | --- |
+| **Q11**（原**唯一**待确认项，现已定案） | 「本合同有效期为 N 年」**算** `service_valid_months` 来源 —— **按语义取**；`Q4①` 由「字面」**改为「语义」** | 用户 2026-10-13 |
+| **Q4①′** | 仍**写死排除**的仅：**质保期 / 保修期 / 缺陷责任期 / 保密期**（属售后质量责任期 / 保密义务期，与"服务持续多久"无关） | 同上 |
+| **Q4①″** | 同时出现「服务期」与「合同有效期」时，**以「服务期 / 服务期限」为准** | 同上（本方案新增，防随机 —— §19.8 教训） |
+| **新增护栏** | 字段名 `months` **仅为命名**，返回**原文写法**、**绝不折算为月数**（"两年" ≠ "24"） | 用户指出字段名可能诱导折算 |
+
+**改动清单**：
+
+- [x] 23.1 `prompts/contract_review.yaml` `prefill:` 段 —— `service_valid_months` 段由「只取字面 + 有效期黑名单」改写为「**按语义取**」三分支（算 / 不算 / 区间→null）+ months 反折算护栏
+- [x] 23.2 `prefill_prompts.py` `_FIELDS["contract_info"]` 同步；并订正 `_FIELDS["guarantee"]` 里「d03 实际主要命中…」的表述
+- [x] 23.3 本 change spec delta —— 「预填字段数据契约」的 Q4① 条款改写；新增 Scenario「服务类合同的『合同有效期』计入服务有效期限」；「履约保证金多笔抽取」的 d03 命中表述订正
+- [x] 23.4 `prefill_response_formats.py` 注释订正（d03 命中**仅两种**）
+- [x] 23.5 `tests/test_contract_review_prefill.py` —— `test_prefill_prompt_carries_twentieth_round_rules` 的 Q4① 断言改为「按语义取 / 本合同有效期为两年 / 缺陷责任期 / 绝不折算成月数」（原断言 `"都不属于"` 已随措辞改写而失效 → 一并更新）
+- [x] 23.6 `docs/integration/…prefill-api-integration.md`（10-12 备注 + §4.5 字段行）与设计文档 §4.1 同步
+- [x] 23.7 护栏措辞改**双向**（用户担心"原文本身是月、会不会被改成非月"）：显式写明「原文写"13.5个月"就**照抄**"13.5个月"，不得改写成"1年"或其它形式」+「**两个方向都不许换算**」；同步 yaml / `_FIELDS` / spec / 接口文档 §4.5 / 设计文档 §4.1，测试加断言 `两个方向都不许换算`、`13.5个月`
+- [x] 23.8 验证（见下）
+
+**验证**：
+
+- `pytest tests/test_contract_review_prefill.py -q` → **58 passed**
+- `openspec validate contract-review-mvp-prefill --strict` → **is valid**
+- `tmp/check_yaml_sections.py` → 非 prefill 各段逐行相同（本轮改的是 `prefill:` 段）✅ 红线②
+- ✅ **实跑（2026-10-13 10:5x，模型服务恢复）**：中汇 d02 `service_valid_months = '两年'` **3/3**；东软 / 吉林银行（反例）均 `null` **未误取**；吉林银行 d03 `guarantee = []`（A3 幻觉未复现）；26年运维 d03 `('预付款保函','50%')`。明细见 `tmp/prefill-runs/实跑复核-2026-10-13.md`
+
+**改动性质**：**prompt 规则改动 + 一处 spec 口径变更**（Q4① 由字面改语义）。字段名 / 字段集合 / 响应结构 / 请求参数**零新增零改名**；服务端业务代码**零改动**。**不新增 change**（就地修订在途 delta）。
+
+⚠️ **需知会**：Q4① 原为 **2026-10-12 业务方（吴钢 / 王晓丽）定案**，本轮**修订其「有效期」部分**（吴钢如参与原定案，建议同步知会）。
+
+**实跑结论（2026-10-13 10:5x，模型服务已恢复）**：中汇 d02 `service_valid_months = '两年'` **3/3**（Q11 语义化达成）、东软 / 吉林银行（**反例**）均 `null`（未误取）。⚠️ 但顺带证实 **W1 仍未收敛**（吉林银行 `start` **2/3** 有值）与 🆕 **中汇 `contract_plan` 抖动**（3 次 3 形态），**二者均非本轮引入** → 详见 `tmp/prefill-runs/实跑复核-2026-10-13.md`。
+
+📌 **本轮教训（两条）**：
+1. **「写死」与「智能」的边界**：把字段来源写成**字面白名单**，看似精确，实则把**语义等价**的表述（合同有效期 = 服务期限）一并挡在门外 → 字段大面积空。**来源判定宜用语义判据 + 少量"明显不同"的写死排除**；用户原话："限制这么死就不是智能了，那不就成了纯编码了吗"。
+2. **字段名会诱导输出**：`service_valid_months` 里的 `months` 有把模型推向"折算月数"的风险（Q7 案例中模型确曾把 1 年区间答成 `"12个月"`）。**凡字段名与目标类型不一致（名含 month 但要求原文写法），都要在 prompt 显式声明"名仅为命名、返回原文"**。
+
