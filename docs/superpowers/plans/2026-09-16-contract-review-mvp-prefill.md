@@ -3,6 +3,13 @@
 > 对应 OpenSpec change：`contract-review-mvp-prefill`。**依赖 change `llm-disable-thinking` 先完成**（见 `docs/superpowers/plans/2026-09-16-llm-disable-thinking.md`）。
 > 设计依据：`docs/superpowers/specs/2026-09-15-contract-review-prefill-design.md`。
 > 执行方式：测试驱动，先红后绿。本计划创建时**未修改任何业务代码**。
+>
+> ⚠️ **历史快照声明（2026-10-14 补注）**：本文是 **2026-09-16 当时的实施计划快照**，其中的口径为**当时状态**，**不随后续轮次更新**。若与下方文件冲突，**以下列文件为准**：
+> - 口径总账 → `openspec/changes/contract-review-mvp-prefill/{spec.md,tasks.md}`（含 §20–§26 各轮定案）；
+> - 接口契约 → `docs/integration/2026-09-16-contract-review-prefill-api-integration.md`；
+> - 设计 → `docs/superpowers/specs/2026-09-15-contract-review-prefill-design.md`；
+> - 实现 → `app/capabilities/contract_review/prefill_{prompts,response_formats,schemas}.py` + `prompts/contract_review.yaml`。
+> 🔴 **已知过期点（勿据此实现）**：本文 L266 / L430 / L630 把 `guarantee.type` 写作 `["履约保函","履约保证金"]`（2 值或 3 值）—— **当前 schema 枚举为 7 值**（2026-10-13 扩），且 **服务只输出履约两类**（2026-10-14 定案，见 tasks.md §26：其余 5 类仅作**负向参考**）。
 
 **目标：** 在 `POST /api/v1/contract-review` 上新增 `mode=prefill` 形态，从合同正文抽出 D-02（合同管理员，17 字段）+ D-03（销售，9 字段）共 26 个返回字段，经 `prefill_scope` 可按场景只抽一半。
 

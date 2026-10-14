@@ -55,6 +55,43 @@ def test_prefill_evidence_requires_quote_allows_null_section():
     assert PrefillEvidence(section="第四条 付款方式及条件", quote="…").section == "第四条 付款方式及条件"
 
 
+def test_prefill_evidence_quote_accepts_null_and_serializes_as_null():
+    """方案 A（2026-10-14）：`quote` 可空 —— 与 EVIDENCE_SCHEMA / 对外接口文档对齐。
+
+    模型**合法**输出 `"quote": null` 时：整包验收通过、该条 quote 为 None、
+    线上序列化为 `"quote": null`；不再触发 ValidationError 打掉整次预填。
+    """
+    from fastapi.encoders import jsonable_encoder
+
+    from app.capabilities.contract_review.prefill_schemas import PrefillEvidence
+    from app.capabilities.contract_review.prefill_service import _build_payload
+
+    assert PrefillEvidence(quote=None).quote is None
+
+    payload = _build_payload(
+        "d02",
+        {
+            "contract_plan": [
+                {
+                    "milestone_name": "启动",
+                    "milestone_code": "begin",
+                    "milestone_seq": 1,
+                    "evidence": [
+                        {"section": "第四条 付款方式及条件", "quote": None},
+                        {"section": None, "quote": "无"},
+                        {"section": "第三条 合同金额", "quote": "本合同总金额为人民币壹佰万元整"},
+                    ],
+                }
+            ]
+        },
+    )
+    assert payload.contract_plan[0].evidence[0].quote is None
+    assert jsonable_encoder(payload)["contract_plan"][0]["evidence"][0] == {
+        "section": "第四条 付款方式及条件",
+        "quote": None,
+    }
+
+
 from app.capabilities.contract_review.prefill_response_formats import (
     SCOPE_GROUPS,
     get_prefill_response_format,
@@ -306,16 +343,27 @@ def test_prefill_prompt_carries_fill_in_blank_marker_rule():
 
 
 def test_prefill_prompt_carries_service_date_source_rule():
-    """服务日期的来源必须限定在服务 / 售后 / 质保条款，且只认绝对日期。
+    """服务日期的来源必须限定在服务 / 售后 / 质保条款，且只认绝对日期；两字段**各自独立取值**。
 
-    背景：`service_end_date` 曾被填成履行期限条款里的开发完成日 —— 在**非服务类**合同下
-    这是误抓（判据：起止不成对）。
+    背景：`service_end_date` 曾被填成履行期限条款里的开发完成日 —— 在**非服务类**合同下这是误抓。
+
+    ⚠️ 2026-10-13（第二十四轮）订正：当时用的判据「起止不成对」本是**诊断启发式**，却被固化成
+    输出约束「两字段必须成对」—— **该约束已废止**：它会把原文只给一端时**本来能取到的一端也丢掉**，
+    且与单点日期规则冲突。真正治本的是**来源约束**（只从服务 / 售后 / 质保条款取）。
     """
     from app.capabilities.contract_review.prefill_prompts import build_prefill_messages
 
     text = "".join(m.content for m in build_prefill_messages("d02", "正文"))
     for phrase in ("service_start_date", "service_end_date", "质保", "绝对日期", "事件起算"):
         assert phrase in text, phrase
+
+    flat = text.replace(" ", "").replace("\n", "").replace("*", "")
+    # 🔴 2026-10-13：两字段**各自独立取值**（能取到就取、取不到就 null）
+    assert "各自独立取值" in flat
+    assert "同时有值" in flat and "同时为空" in flat
+    # 反向：旧的「必须成对」约束必须已删除（否则原文只给一端时会丢值）
+    assert "同为null" not in flat
+    assert "必须成对" not in flat
 
 
 def test_prefill_prompt_scopes_signing_date_prohibition_to_start_only():
@@ -349,6 +397,34 @@ def test_prefill_prompt_scopes_signing_date_prohibition_to_start_only():
     # 反向：必须禁止"把同一日期对称填充进 start"的读法
     assert "对称" in flat
 
+    # 🔴 W1 修订（2026-10-13 用户定案）：触发条件由「措辞」改为「形态」—— 按绝对日期个数分流
+    assert "先数" in flat
+    assert "日期个数" in flat
+    assert "构成区间" in flat
+    assert "两端各归其位" in flat
+    assert "终点归service_end_date" in flat
+    assert "两端都必须取" in flat
+    # 反向：靠标题里的"期限"二字触发的旧写法必须已删除（那正是 W1 抖动的成因）
+    assert "「期限」表述" not in flat
+    assert "单一绝对日期/「期限」表述" not in flat
+    # 反向：即便标题写"期限"，只要是区间就必须两端都取（防"看标题下判断"回潮）
+    assert "不得因为标题带" in flat
+    # Q7 边界（W1 放大器）：区间"留空"规则必须显式声明不外溢到时间字段
+    assert "不得外溢到时间字段" in flat
+    # 🔴 2026-10-13 补（用户 #2）：不靠"叠加示例"解决覆盖问题（穷举不完）——
+    # 必须显式声明"上例仅为举例、不是穷举"，判据落在**形态（日期个数）**上
+    assert "上例仅为举例" in flat and "不是穷举" in flat
+    assert "不影响判定" in flat
+
+    # 🔴 2026-10-13 补（单点日期方向，用户提出）：1 个绝对日期必须**按语义方向**归位；
+    # 指向不明 → 两字段都 null（宁可空、不要错位 —— 错位是静默错误）
+    assert "指向开始" in flat
+    assert "指向截止" in flat
+    assert "指向不明" in flat
+    assert "宁可空" in flat and "不要错位" in flat
+    # 方向判据必须落在**语义**上，不得退回"看标题有没有『期限』二字"
+    assert "方向看" in flat
+
 
 def test_prefill_prompt_carries_contract_type_rule():
     """合同类型必须由**合同名称**判定，且**读不到名称时按非服务类**兜底。
@@ -357,9 +433,13 @@ def test_prefill_prompt_carries_contract_type_rule():
     服务类合同允许 `service_end_date` 取合同自身的完成 / 交付截止日。
 
     用户口径（2026-10-07，两轮收窄）：按**软件公司的服务类合同**缩小范围 ——
-    服务性质词只剩 服务 / 运维 / 运营 / 维护 / 技术支持 这 5 个；
+    服务性质词定为 服务 / 运维 / 运营 / 维护 / 技术支持 这 5 个；
     开发 / 咨询 / 设计 / 集成 / 实施 / 监理 / 勘察 / 检测 / 评估 / 外包 / 培训 为**反例**。
     ⚠️ 但反例词**没有否决权**：名称含「服务」二字仍判服务类（如「集成服务合同」）。
+
+    🔴 2026-10-13 补第 6 个词 **`维保`**（淮安 PACS 维保合同实证）：`维保` = **维护 + 保养**，
+    是完全意义的服务合同 —— 但「维保」≠「维护」，不在原 5 词表里 → 该合同被误判**非服务类**。
+    故补入词表。⚠️ 这仍是**可复现的词表匹配**，**不是**放开成语义判断（词表可测、可审计）。
 
     ⚠️ 历史坑（2026-10-05）：词表**曾误收「开发」** → 「技术开发合同」被误判为服务类，
     连带把它的「开发完成日」合法化成 `service_end_date`（= 把一条真缺陷洗成合法）。
@@ -373,8 +453,10 @@ def test_prefill_prompt_carries_contract_type_rule():
 
     flat = text.replace(" ", "").replace("\n", "").replace("*", "")
 
-    # 正向：5 个服务性质词必须作为词表出现（两轮收窄后的定稿清单）
-    assert "服务/运维/运营/维护/技术支持" in flat
+    # 正向：服务性质词必须作为词表出现（2026-10-07 定 5 词 → 2026-10-13 补第 6 词「维保」）
+    assert "服务/运维/运营/维护/技术支持/维保" in flat
+    # 正向：「维保」必须被写明语义（维护 + 保养），否则模型可能不敢把它当服务性质词
+    assert "维护+保养" in flat
 
     # 反向断言 ①：11 个反例词必须被**显式点名**（而不是简单删掉），且写成否定式
     assert "都不算" in flat
@@ -390,6 +472,11 @@ def test_prefill_prompt_carries_contract_type_rule():
     assert "外包/维护/技术支持/实施" not in flat
     assert "实施/集成/培训" not in flat
     assert "技术支持/外包/培训" not in flat
+    # 反向断言 ⑤：「维保」是**正向**服务性质词，绝不得被塞进反例词列
+    #（反例词列仍必须以「培训」收尾；若有人把「维保」加进反例，这里立刻红）
+    assert "培训都不算" in flat
+    assert "外包/培训/维保" not in flat
+    assert "培训/维保" not in flat
 
 
 def test_prefill_prompt_carries_payment_terms_trigger_clause():
@@ -754,7 +841,8 @@ def test_prefill_prompt_carries_twentieth_round_rules():
       - Q4②  `inspection_count` 接受**频次表述**且**整句保留**（不是只写数字）；
       - Q7   服务期以**起止区间**给出 → `service_valid_months` 返回 null，**不推算**；
       - Q6   与主句并列、直接约束"能否付款"的条款**应一并取入** `payment_terms`；
-      - Q8   `guarantee.type` 新增 **"预付款保函"**（金额等于预付款额者）；
+      - Q8   `guarantee.type` **纳入「预付款保函」判据**（金额等于预付款额、挂付款条款者）——
+             ⚠️ 2026-10-14 收敛：该判据 SHALL **仅作负向参考**（命中即排除、该条不输出）；
       - Q9   `payment_method` **原文原样**（含主语 / 修饰词，不得精简）；
       - Q10  多阶段付款**全部取**、按原文顺序拼接；
       - A1   金额 / 比例数值**逐字照抄本合同原文**，禁套示例值 / 行业惯例（示例值已从 "5%" 改掉）；
@@ -784,17 +872,26 @@ def test_prefill_prompt_carries_twentieth_round_rules():
     assert "13.5个月" in flat
     # Q4②：inspection_count 频次表述整句保留
     assert "整句保留" in flat
-    assert "每周1次系统运行情况检查" in flat
+    assert "每周1次" in flat      # 示例已去值化（不再逐字抄合同原文），只保留"频次 + 整句照抄"的形态
 
     # Q6：约束付款的并列条款也要取
     assert "约束付款的并列条款" in flat
     # Q10：多阶段全部取
     assert "多阶段付款必须全部取" in flat
-    # Q8：预付款保函
+    # Q8（2026-10-14 收敛）：预付款保函判据仍在 prompt 中，但只作**负向参考**（命中即排除）
     assert "预付款保函" in flat
-    # Q9：payment_method 原文原样（含主语/修饰词，不提炼、不编造）
-    assert "甲方自带汇票/电汇/支票" in flat
-    assert "转账方式" in flat
+    # Q9 → A5 修订（2026-10-13 第二十四轮）：payment_method **只取支付手段本体、去掉框架词**
+    assert "甲方自带汇票/电汇/支票" in flat      # 🔴 唯一例外：该表述无框架词可去，须保留
+    assert "取原文里" in flat
+    assert "去掉包着它的框架词" in flat
+    assert "一律去掉" in flat
+    assert "唯一例外" in flat
+    assert "通过银行转账的方式" in flat          # 示例原文（返回应为 "银行转账"）
+    # 反向：旧口径「整段照抄 + 必须保留介词」必须已删除
+    #（它与第二十轮 c1 定案「以转账方式 → 转账方式」（**去了介词**）直接矛盾，
+    # 正是 A5 的成因 —— 规则说 A、示例示范 B，模型永远跟示例走）
+    assert "必须保留介词" not in flat
+    assert "整段表述一并照抄" not in flat
     assert "绝不凭示例或常识编造" in flat
     # A1：数值逐字照抄原文；且 amount 示例值不再是 5%
     assert "逐字照抄本合同原文" in flat
@@ -804,15 +901,20 @@ def test_prefill_prompt_carries_twentieth_round_rules():
 
 
 def test_guarantee_type_enum_includes_prepayment_bond():
-    """`guarantee.type` 取值集合 —— Q8（2026-10-12）放宽 + 第三轮补充（2026-10-13）扩至保函种类表全量。
+    """`guarantee.type` **schema 取值集合** —— Q8（2026-10-12）放宽 + 第三轮（2026-10-13）扩至保函种类表全量。
 
-    Q8：新增「预付款保函」（金额 = 预付款额、挂付款条款者）。
-    第三轮补充：扩为 `履约保函` / `履约保证金` / `预付款保函` / `投标保函` / `质量保函` /
+    Q8：纳入「预付款保函」（金额 = 预付款额、挂付款条款者）。
+    第三轮：扩为 `履约保函` / `履约保证金` / `预付款保函` / `投标保函` / `质量保函` /
     `质保保函` / `支付保函` —— 覆盖业务方「保函种类表」全部类型（表内「质量·质保保函」为
     `质量保函` / `质保保函` 两种、说明相同）；`履约保证金` 表内无此项，按合同实务常见概念保留。
 
-    属取值集合放宽 —— 不新增字段、不改名、不改字段集合、不改类型（仍是 string|null）。
-    ⚠️ 下游若对 type 做严格枚举解析，需同步认知**全部**新增值。
+    🔴 **枚举 ≠ 可选输出值（2026-10-14 用户定案）**：d03 **只输出** `履约保函` / `履约保证金` 两种；
+    其余 5 类在此保留，是作**负向参考**用的 —— 命中其一即 100% 确定「不是履约类」→ 该条不输出；
+    落在 7 类之外或判不清 → 同样不输出。保留它们是为了把「不是履约类」固化成**可复核判据**
+    （避免语义不清时抖动），**不是**把它们当候选值。
+    ⚠️ 下游若对 type 做严格枚举解析，仍需认知**全部**取值；但**不应期待**出现其余 5 类之一。
+    （本测试只锁 **schema 枚举集合**；「只输出两类」这一**取值约束**在 prompt 层实现，见
+    `test_prefill_prompt_carries_guarantee_negative_reference_rule`。）
     """
     from app.capabilities.contract_review.prefill_response_formats import get_prefill_response_format
 
@@ -836,7 +938,8 @@ def test_prefill_prompt_carries_third_round_rules():
                  **有成果物** → 按成果物取 `交付(deliver)` 或 `验收`；`contract_plan`
                  **只从付款条件拆**，不得自造无付款金额的收尾 / 验收项；
       - B-1      保函 `type` 按**保函种类表**判别（担保时间段 / 核心保障 / 常见金额），
-                 预付款保函 = 金额等于预付款额、挂付款条款作预付款前提；**不得默认归履约保函**；
+                 预付款保函 = 金额等于预付款额、挂付款条款作预付款前提；**不得默认归履约保函**
+                 （2026-10-14 收敛：其余各类**仅作负向参考**，命中即排除、该条不输出）；
       - A3       **违约责任 / 违约赔偿 / 违约金**条款**不构成担保** —— 无独立担保条款时 `guarantee` 必须 `[]`。
 
     断言把口径钉在 prompt 上，防止回退。
@@ -853,11 +956,12 @@ def test_prefill_prompt_carries_third_round_rules():
     assert "不得自行追加" in flat
     assert "收尾" in flat
 
-    # B-1：保函 type 判别按保函种类表，且禁默认归履约保函
+    # B-1：保函 type 判别按保函种类表，且禁把非履约类强行归入履约保函
     assert "保函种类表" in flat
     assert "担保时间段" in flat
     assert "预付款可追回" in flat
-    assert "不得默认归「履约保函」" in flat
+    assert "严禁强行归类" in flat and "履约保函" in flat   # 2026-10-14 措辞：严禁把非履约类改标成履约保函
+    assert "不看保函名字" in flat
 
     # A3：违约金 / 赔偿金不构成担保
     assert "违约赔偿" in flat
@@ -866,12 +970,14 @@ def test_prefill_prompt_carries_third_round_rules():
 
 
 def test_prefill_prompt_carries_guarantee_type_catalog():
-    """第三轮补充（2026-10-13）：`guarantee.type` 扩到「保函种类表」全量 + 实务保留值，落到 prompt。
+    """第三轮补充（2026-10-13）：`guarantee.type` 的**判别表**扩到「保函种类表」全量 + 实务保留值，落到 prompt。
 
     业务方口径：
       - 表内「质量·质保保函」实为 **质量保函 / 质保保函** 两种（说明相同）；
       - `履约保证金`（表内无此项）按**合同实务常见概念**保留；
-      - d03 实际命中 `履约保函` / `履约保证金` **两种**；`预付款保函` 与其余各类**地位相同**，均为**兼容覆盖**。
+      - 🔴 2026-10-14 用户定案：d03 **只输出** `履约保函` / `履约保证金` **两种**；
+        其余各类（`预付款保函` / 投标 / 质量·质保 / 支付）**不是候选输出值**，而是**负向参考**
+        —— 命中其一定义即 100% 确定「不是履约类」→ **该条不输出**。
 
     反向断言：旧的「其余种类不在本字段可选值内 / 取值集合是否扩充待业务方确认」表述不得复活。
     """
@@ -880,7 +986,7 @@ def test_prefill_prompt_carries_guarantee_type_catalog():
     text = "".join(m.content for m in build_prefill_messages("all", "正文"))
     flat = text.replace(" ", "").replace("\n", "").replace("*", "")
 
-    # 新增四类取值均出现在 prompt 的 type 判别里
+    # 其余各类判据均出现在 prompt 的 type 判别里（作负向参考）
     for value in ("投标保函", "质量保函", "质保保函", "支付保函"):
         assert value in flat, value
     # 履约保证金按实务常见概念保留
@@ -889,3 +995,99 @@ def test_prefill_prompt_carries_guarantee_type_catalog():
     # 反向断言：不再把这些类型声明为「不可作为取值 / 待业务方确认」
     assert "不在本字段可选值内" not in flat
     assert "取值集合是否扩充待业务方确认" not in flat
+
+
+def test_prefill_prompt_carries_guarantee_negative_reference_rule():
+    """2026-10-14 用户定案：`guarantee.type` **只输出履约两类**，其余 5 类**仅作负向参考**。
+
+    口径（用户逐字）：除履约相关的 2 个值外，其他 5 个值是用来**反向参考**的 ——
+    识别到是这 5 个之一，就 **100% 确定不是履约需要的 2 个值**；不在这 7 个值中，也不能认为是履约的 2 个值。
+    保留 5 条说明的用意 = 把「不是履约类」固化成**可复现判据**，避免语义不清时产生抖动。
+
+    三层结构必须同时在 prompt 里：
+      ① 只输出履约两类（正向白名单）；
+      ② 其余各类「命中即排除」（负向参考）；
+      ③ 兜底：不属任何一类 / 判不清 → **不输出**（宁可空、不要错位）。
+    """
+    from app.capabilities.contract_review.prefill_prompts import build_prefill_messages
+
+    text = "".join(m.content for m in build_prefill_messages("all", "正文"))
+    flat = text.replace(" ", "").replace("\n", "").replace("*", "")
+
+    # ① 正向：只输出履约两类
+    assert "只允许`履约保函`或`履约保证金`" in flat
+    assert "一律不输出" in flat
+    # ② 负向：其余各类仅作负向参考、命中即排除
+    assert "负向参考" in flat
+    assert "命中任一条" in flat
+    assert "该条不输出" in flat
+    assert "仅用于排除" in flat
+    assert "不得作为输出取值" in flat
+    # ③ 兜底：判不清 → 不输出（宁可空、不要错位）
+    assert "判不清" in flat
+    assert "宁可空、不要错位" in flat
+    # ④ 反「强行归类」护栏（2026-10-14 实跑暴露：只写"只允许两类"会逼模型把预付款保函改标成履约保函）
+    assert "是常见且正确的输出" in flat          # `[]` 是常见且正确的输出
+    assert "严禁强行归类" in flat
+    assert "改标成" in flat
+    # ⑤ 形态判据：付款条款中的保函一律判为预付款保函（可复现，不靠推断）
+    assert "形态判据" in flat
+    # ⑥ 准入闸门（2026-10-14 实跑定案）：默认 []，只有"独立履约担保条款"才过闸
+    assert "准入闸门" in flat
+    assert "不过闸门" in flat
+    # 枚举 ≠ 可选输出值
+    assert "不是可选输出值" in flat
+    # 反向护栏：旧口径「从 7 个中选一 / 按担保标的判别归入」不得复活
+    assert "从 7 个中选一" not in flat
+
+
+def test_prefill_prompt_carries_round4_field_rules_and_devalued_examples():
+    """第四轮（2026-10-14）：补齐 4 个此前只有「原文」二字的字段级规则，并把 `_EXAMPLES` 去值化。
+
+    背景：全量审查发现 prefill 有 4 个字段在 prompt 里**只有「原文」二字**（无字段级规则），
+    以及 `_EXAMPLES` 里仍残留**可复用业务值**（金额 / 日期 / 里程碑名 / 币种 / 条款标题）——
+    正是 A1 / B-1 两类「示例值污染」的温床。
+
+      - `service_content`：取**整段原文**、去 `【】`、**不概括、不只写关键词**；
+      - `service_sla`：取服务级别 / 响应时限 / **可用性（SLA）**的约定原文；
+      - `onsite_service_count`：🔴 **只取"次数"** —— 原文只有**时长**（如 5*8 / 7×24）而无次数含义 → `null`；
+      - `milestone_text`：**完整照抄（整句 / 整段）**、**不得概括成短语**（概括成"预付款""尾款"即为错）。
+
+    示例去值化原则：**凡示例字段取值域与输出取值域重叠，示例必须用 `null` 占位**（同 §26 guarantee.type）。
+    """
+    from app.capabilities.contract_review.prefill_prompts import _EXAMPLES, build_prefill_messages
+
+    text = "".join(m.content for m in build_prefill_messages("all", "正文"))
+    flat = text.replace(" ", "").replace("\n", "").replace("*", "")
+
+    # ① service_content：整段原文、不概括
+    assert "服务内容及方式" in flat
+    assert "整段原文" in flat
+    assert "不得概括" in flat
+    # ② service_sla：SLA 三类约定
+    assert "服务级别" in flat and "响应时限" in flat and "可用性（SLA）" in flat
+    # ③ onsite_service_count：只取"次数"；时长 → null
+    assert '只取"次数"' in flat
+    assert "没有次数含义" in flat
+    # ⚠️ 用 text（未去 *）断言：flat 会把 `5*8` 的 `*` 一并剥掉
+    assert "5*8小时现场驻场" in text and "7×24小时的响应" in flat
+    # ④ milestone_text：完整照抄、不得概括
+    assert "里程碑原文描述" in flat
+    assert "不得概括成短语" in flat
+    assert "尾款" in flat          # 反例形态（概括成"预付款""尾款"即为错）
+
+    # ⑤ 示例去值化：旧的可复用业务值不得复活
+    joined = "".join(_EXAMPLES.values())
+    for bad in (
+        "合同签订及预付款",      # milestone_text 旧示例（与"完整原文"规则矛盾）
+        "3,860,000",             # contract_amount 旧示例
+        "2026年1月20日",         # plan_finish_date 旧示例
+        '"CNY"',                 # currency 旧示例（取值域与输出重叠）
+        "第四条付款方式及条件",   # evidence.section 旧示例
+        "第八条履约保证金",       # guarantee evidence 旧示例
+    ):
+        assert bad not in joined, f"示例值污染残留：{bad}"
+    # 结构骨架仍在：milestone_seq（整数、非原文）+ evidence 的"无"哨兵
+    assert '"milestone_seq": 1' in joined
+    assert '"quote": "无"' in joined
+    assert '"milestone_text": null' in joined

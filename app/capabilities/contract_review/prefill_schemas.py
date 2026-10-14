@@ -38,12 +38,18 @@ class _VerbatimModel(BaseModel):
 class PrefillEvidence(BaseModel):
     """原文依据。section 取顶层条款标题原文，原文无标题结构时为 null。
 
-    `quote == "无"` 是**出处缺失的显式声明**（该处出处在原文里确实不存在），不是空值占位 ——
-    调用方须用**全等**判定，否则原文里的"无违约条款"会被误判成缺失。
+    `quote` 为 `str | None`（2026-10-14 方案 A）：与 JSON schema（`EVIDENCE_SCHEMA` 的
+    `_nullable_string`）及对外接口文档（「string 或 null」）对齐 —— 模型**合法**输出
+    `null` 时该条为 `null`、其余结果照常返回，不再让整次预填降级 `failed`。
+    缺省亦取 `None`（与 `section` 及全 schema 家族一致；§4.5「缺失表达一律 null」）。
+
+    🔴 `null` 与 `"无"` **不同义**：`quote == "无"` 是**出处缺失的显式声明**
+    （该处出处在原文里确实不存在），不是空值占位 —— 调用方对 `"无"` 须用**全等**判定，
+    否则原文里的"无违约条款"会被误判成缺失；对 `null` 按「无片段」处理即可。
     """
 
     section: str | None = None
-    quote: str = ""
+    quote: str | None = None
 
 
 class ContractInfo(_VerbatimModel):
@@ -81,7 +87,14 @@ class FinanceInfo(_VerbatimModel):
 
 
 class GuaranteeItem(_VerbatimModel):
-    """D-03 履约保证金 / 保函（数组，每项 7 字段，支持多笔）。"""
+    """D-03 履约保证金 / 保函（数组，每项 7 字段，支持多笔）。
+
+    `type` 声明为 `str | None`（不锁 Literal）—— 枚举约束由 json_schema 在模型侧声明（7 值，
+    见 `prefill_response_formats.GUARANTEE_SCHEMA`）。🔴 **枚举 ≠ 可选输出值**（2026-10-14 定案）：
+    服务**实际只输出** `履约保函` / `履约保证金` **两种**；其余 5 类（预付款 / 投标 / 质量·质保 / 支付）
+    在 schema 中保留**仅作负向参考**（命中其一即 100% 确定"不是履约类"→ 该条不输出）。
+    取值约束在 **prompt 层**实现（`prefill_prompts._FIELDS["guarantee"]`），**不在本模型做后处理**。
+    """
 
     type: str | None = None
     amount: str | None = None
